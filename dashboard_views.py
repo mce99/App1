@@ -198,7 +198,9 @@ def render_behavior(hourly: pd.DataFrame, weekday_avg: pd.DataFrame, filtered: p
         st.bar_chart(weekday_avg[["Net"]])
 
 
-def render_subscriptions(recurring: pd.DataFrame, budget_table: pd.DataFrame) -> None:
+def render_subscriptions(
+    recurring: pd.DataFrame, budget_table: pd.DataFrame, goals_table: pd.DataFrame | None = None
+) -> None:
     st.header("Plans & Recurring")
     st.caption("Recurring-candidate detector plus budget control.")
 
@@ -210,6 +212,12 @@ def render_subscriptions(recurring: pd.DataFrame, budget_table: pd.DataFrame) ->
 
     st.markdown("### Budget progress")
     st.dataframe(budget_table, use_container_width=True)
+
+    st.markdown("### Goals progress")
+    if goals_table is None or goals_table.empty:
+        st.info("No goals configured.")
+    else:
+        st.dataframe(goals_table, use_container_width=True)
 
 
 def render_data_explorer(filtered: pd.DataFrame, source_context: pd.DataFrame) -> None:
@@ -227,3 +235,79 @@ def render_metric_guide() -> None:
     st.header("Metric Guide")
     st.caption("Definitions and formulas behind each KPI.")
     st.dataframe(pd.DataFrame(METRIC_GUIDE), use_container_width=True, height=680)
+
+
+def render_accounts(account_table: pd.DataFrame, transfers: pd.DataFrame) -> None:
+    st.header("Accounts")
+    st.caption("Track spending, earnings, and transfers per account.")
+    st.dataframe(account_table, use_container_width=True)
+    st.markdown("### Transfer ledger")
+    if transfers.empty:
+        st.info("No transfer-like transactions detected for current filters.")
+    else:
+        st.dataframe(
+            transfers[
+                [
+                    "Date",
+                    "Time",
+                    "SourceAccount",
+                    "CounterpartyAccount",
+                    "TransferDirection",
+                    "DebitCHF",
+                    "CreditCHF",
+                    "TransferConfidence",
+                    "Merchant",
+                ]
+            ],
+            use_container_width=True,
+        )
+
+
+def render_forecast(forecast_table: pd.DataFrame) -> None:
+    st.header("Forecast")
+    st.caption("Projected 30/60/90 day cashflow from trend + recurring signals.")
+    if forecast_table.empty:
+        st.info("Not enough data to generate forecast.")
+        return
+    st.dataframe(forecast_table, use_container_width=True)
+    st.bar_chart(forecast_table.set_index("HorizonDays")[["ExpectedSpendingCHF", "ExpectedEarningsCHF"]])
+    st.line_chart(forecast_table.set_index("HorizonDays")[["ExpectedNetCHF"]])
+
+
+def render_anomalies(anomalies: pd.DataFrame, dupes: pd.DataFrame) -> None:
+    st.header("Anomalies")
+    st.caption("Unusual transactions and possible duplicates.")
+    st.markdown("### Suspicious spend anomalies")
+    if anomalies.empty:
+        st.success("No major anomalies flagged in current filters.")
+    else:
+        st.dataframe(anomalies, use_container_width=True)
+
+    st.markdown("### Possible duplicate transactions")
+    if dupes.empty:
+        st.success("No duplicate candidates found.")
+    else:
+        st.dataframe(dupes, use_container_width=True)
+
+
+def render_data_health(health_table: pd.DataFrame, quality: dict[str, float]) -> None:
+    st.header("Data Health")
+    st.caption("Visibility into data completeness and reliability.")
+    st.dataframe(health_table, use_container_width=True)
+    cols = st.columns(4)
+    cols[0].metric("Missing time %", f"{quality['missing_time_pct']:.1f}%")
+    cols[1].metric("Other category %", f"{quality['other_category_pct']:.1f}%")
+    cols[2].metric("Unknown time-of-day %", f"{quality['unknown_timeofday_pct']:.1f}%")
+    cols[3].metric("Missing currency %", f"{quality['missing_currency_pct']:.1f}%")
+
+
+def render_report_pack(summary_md: str, zip_bytes: bytes) -> None:
+    st.header("Report Pack")
+    st.caption("One-click export of summary and raw aggregates.")
+    st.markdown(summary_md)
+    st.download_button(
+        "Download report pack (.zip)",
+        data=zip_bytes,
+        file_name="pulseledger_report_pack.zip",
+        mime="application/zip",
+    )

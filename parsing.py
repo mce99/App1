@@ -2,6 +2,7 @@
 
 import csv
 import datetime
+import hashlib
 import io
 from typing import Any
 
@@ -141,6 +142,23 @@ def _parse_datetime_series(values: pd.Series) -> pd.Series:
     if missing.any():
         parsed.loc[missing] = pd.to_datetime(values.loc[missing], errors="coerce", dayfirst=True)
     return parsed
+
+
+def _transaction_fingerprint(row: pd.Series) -> str:
+    parts = [
+        str(row.get("Date", "")),
+        str(row.get("Time", "")),
+        str(row.get("Währung", "")),
+        str(row.get("Debit", "")),
+        str(row.get("Credit", "")),
+        str(row.get("Beschreibung1", "")),
+        str(row.get("Beschreibung2", "")),
+        str(row.get("Beschreibung3", "")),
+        str(row.get("Fussnoten", "")),
+        str(row.get("Transaktions-Nr.", "")),
+    ]
+    digest = hashlib.sha1("|".join(parts).encode("utf-8", errors="ignore")).hexdigest()
+    return digest
 
 
 def _clean_csv_text(raw_text: str) -> str:
@@ -341,12 +359,23 @@ def load_transactions(uploaded_file: Any) -> pd.DataFrame:
     df["SourceFile"] = getattr(uploaded_file, "name", "uploaded_file")
     for key, value in context.items():
         df[key] = value
+    if "StatementIBAN" in df.columns:
+        df["SourceAccount"] = df["StatementIBAN"]
+    elif "StatementAccountNumber" in df.columns:
+        df["SourceAccount"] = df["StatementAccountNumber"]
+    else:
+        df["SourceAccount"] = ""
+    df["SourceAccount"] = df["SourceAccount"].replace("", pd.NA).fillna(df["SourceFile"])
+    df["TransactionId"] = df.apply(_transaction_fingerprint, axis=1)
 
     return df
 
 
 def deduplicate_transactions(df: pd.DataFrame) -> pd.DataFrame:
     """Remove likely duplicate transactions across overlapping statement exports."""
+    if "TransactionId" in df.columns:
+        return df.drop_duplicates(subset=["TransactionId"], keep="first").reset_index(drop=True)
+
     dedupe_candidates = [
         "Date",
         "Time",

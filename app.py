@@ -9,29 +9,44 @@ import pandas as pd
 import streamlit as st
 
 from analytics import (
+    account_summary,
+    apply_category_overrides,
     apply_currency_conversion,
     budget_progress,
+    build_report_pack,
     calculate_kpis,
     category_breakdown,
     daily_net_cashflow,
+    data_health_report,
+    detect_anomalies,
+    enrich_transaction_intelligence,
     filter_by_date_range,
+    forecast_cashflow,
+    goals_progress,
     hourly_spending_profile,
     income_source_summary,
     merchant_summary,
     monthly_cashflow,
+    possible_duplicate_candidates,
     quality_indicators,
     recurring_transaction_candidates,
+    review_queue,
     spending_velocity,
     weekday_average_cashflow,
 )
-from categorization import DEFAULT_KEYWORD_MAP, assign_categories
+from categorization import DEFAULT_KEYWORD_MAP, assign_categories_with_confidence
 from dashboard_views import (
+    render_accounts,
+    render_anomalies,
     render_behavior,
     render_cashflow,
     render_data_explorer,
+    render_data_health,
     render_earnings,
+    render_forecast,
     render_home,
     render_metric_guide,
+    render_report_pack,
     render_spending,
     render_subscriptions,
 )
@@ -45,10 +60,7 @@ def _inject_styles() -> None:
         """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700&display=swap');
-
-        html, body, [class*="css"] {
-            font-family: 'Outfit', sans-serif;
-        }
+        html, body, [class*="css"] { font-family: 'Outfit', sans-serif; }
         .stApp {
             background:
               radial-gradient(1200px 420px at 12% 0%, rgba(40, 214, 255, 0.15), transparent 58%),
@@ -63,14 +75,8 @@ def _inject_styles() -> None:
             background: rgba(255,255,255,0.82);
             box-shadow: 0 16px 36px rgba(42, 77, 140, 0.12);
         }
-        .hero h1 {
-            margin: 0;
-            letter-spacing: 0.3px;
-        }
-        .hero p {
-            margin: 0.35rem 0 0 0;
-            color: #244674;
-        }
+        .hero h1 { margin: 0; letter-spacing: 0.3px; }
+        .hero p { margin: 0.35rem 0 0 0; color: #244674; }
         [data-testid="stMetric"] {
             background: rgba(255,255,255,0.90);
             border: 1px solid rgba(45, 88, 162, 0.25);
@@ -89,7 +95,7 @@ def _render_header() -> None:
         """
         <div class="hero">
           <h1>PulseLedger</h1>
-          <p>Modular transaction intelligence for UBS-style exports. Navigate by sections from the sidebar.</p>
+          <p>Modular transaction intelligence with transfer/account tracking, forecasting, anomalies, and rule review.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -143,11 +149,11 @@ def _add_manual_transaction(df: pd.DataFrame) -> pd.DataFrame:
             "TimeOfDay": classify_time_of_day(time_value),
             "SortDateTime": pd.to_datetime(f"{m_date.isoformat()} {time_value}"),
             "SourceFile": "Manual entry",
+            "SourceAccount": "Manual entry",
+            "TransactionId": f"manual-{m_date.isoformat()}-{time_value}-{m_desc1[:12]}",
         }
         out = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-        return out.sort_values(["SortDateTime", "Date", "Time"], na_position="last").reset_index(
-            drop=True
-        )
+        return out.sort_values(["SortDateTime", "Date", "Time"], na_position="last").reset_index(drop=True)
 
 
 def _build_statement_context(df: pd.DataFrame) -> pd.DataFrame:
@@ -160,8 +166,8 @@ def _build_statement_context(df: pd.DataFrame) -> pd.DataFrame:
         )
         .reset_index()
     )
-
     optional_cols = [
+        "SourceAccount",
         "StatementAccountNumber",
         "StatementIBAN",
         "StatementFrom",
@@ -172,7 +178,6 @@ def _build_statement_context(df: pd.DataFrame) -> pd.DataFrame:
     for col in optional_cols:
         if col in df.columns:
             summary[col] = df.groupby("SourceFile", dropna=False)[col].first().reset_index(drop=True)
-
     return summary
 
 
@@ -182,10 +187,6 @@ def _init_timeframe(df: pd.DataFrame) -> tuple[datetime.date, datetime.date]:
 
     if "timeframe_range" not in st.session_state:
         st.session_state["timeframe_range"] = (min_date, max_date)
-    else:
-        start, end = st.session_state["timeframe_range"]
-        if start < min_date or end > max_date:
-            st.session_state["timeframe_range"] = (min_date, max_date)
 
     preset = st.sidebar.selectbox(
         "Timeframe preset",
@@ -193,19 +194,17 @@ def _init_timeframe(df: pd.DataFrame) -> tuple[datetime.date, datetime.date]:
         index=0,
     )
 
-    if preset != "Custom":
-        today = max_date
-        if preset == "Last 30 days":
-            st.session_state["timeframe_range"] = (max(min_date, today - datetime.timedelta(days=29)), today)
-        elif preset == "Last 90 days":
-            st.session_state["timeframe_range"] = (max(min_date, today - datetime.timedelta(days=89)), today)
-        elif preset == "Last 365 days":
-            st.session_state["timeframe_range"] = (max(min_date, today - datetime.timedelta(days=364)), today)
-        elif preset == "Year to date":
-            year_start = datetime.date(today.year, 1, 1)
-            st.session_state["timeframe_range"] = (max(min_date, year_start), today)
-        elif preset == "Full range":
-            st.session_state["timeframe_range"] = (min_date, max_date)
+    today = max_date
+    if preset == "Last 30 days":
+        st.session_state["timeframe_range"] = (max(min_date, today - datetime.timedelta(days=29)), today)
+    elif preset == "Last 90 days":
+        st.session_state["timeframe_range"] = (max(min_date, today - datetime.timedelta(days=89)), today)
+    elif preset == "Last 365 days":
+        st.session_state["timeframe_range"] = (max(min_date, today - datetime.timedelta(days=364)), today)
+    elif preset == "Year to date":
+        st.session_state["timeframe_range"] = (max(min_date, datetime.date(today.year, 1, 1)), today)
+    elif preset == "Full range":
+        st.session_state["timeframe_range"] = (min_date, max_date)
 
     st.sidebar.slider(
         "Date range",
@@ -222,7 +221,7 @@ def _init_timeframe(df: pd.DataFrame) -> tuple[datetime.date, datetime.date]:
     return st.session_state["timeframe_range"]
 
 
-def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None, dict[str, list[str]]]:
     st.sidebar.header("Data Setup")
     uploaded_files = st.sidebar.file_uploader(
         "Upload statements",
@@ -230,26 +229,21 @@ def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
         accept_multiple_files=True,
         help="CSV must be semicolon-delimited (;).",
     )
-
     if not uploaded_files:
         st.info("Upload one or more statement files from the sidebar to start.")
-        return None, None
+        return None, None, {}
 
-    drop_duplicates = st.sidebar.checkbox(
-        "Auto-remove duplicates across files",
-        value=True,
-        help="Recommended if file exports overlap in date range.",
-    )
+    drop_duplicates = st.sidebar.checkbox("Auto-remove duplicates across files", value=True)
 
     try:
         df = merge_transactions(uploaded_files, drop_duplicates=drop_duplicates)
     except Exception as exc:
         st.error(f"Could not read file(s): {exc}")
-        return None, None
+        return None, None, {}
 
     if df.empty or df["Date"].dropna().empty:
         st.warning("No valid transactions found. Check export format and delimiter (;).")
-        return None, None
+        return None, None, {}
 
     df = _add_manual_transaction(df)
 
@@ -275,7 +269,19 @@ def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
     if not keyword_map:
         keyword_map = DEFAULT_KEYWORD_MAP
 
-    enriched = assign_categories(apply_currency_conversion(df, conv_rates), keyword_map)
+    category_list = sorted(keyword_map.keys()) + ["Other", "Transfers"]
+
+    enriched = apply_currency_conversion(df, conv_rates)
+    enriched = assign_categories_with_confidence(enriched, keyword_map)
+    enriched = enrich_transaction_intelligence(enriched)
+
+    # Force transfer category where confidence is high.
+    enriched.loc[(enriched["IsTransfer"]) & (enriched["TransferConfidence"] >= 0.7), "Category"] = "Transfers"
+
+    if "category_overrides" not in st.session_state:
+        st.session_state["category_overrides"] = {}
+    enriched = apply_category_overrides(enriched, st.session_state["category_overrides"])
+
     source_context = _build_statement_context(enriched)
 
     st.sidebar.success(
@@ -283,7 +289,7 @@ def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
         f"{enriched['Date'].min().date()} -> {enriched['Date'].max().date()}"
     )
 
-    return enriched, source_context
+    return enriched, source_context, {"categories": category_list}
 
 
 def _apply_filters(enriched: pd.DataFrame) -> pd.DataFrame:
@@ -293,16 +299,21 @@ def _apply_filters(enriched: pd.DataFrame) -> pd.DataFrame:
     source_options = sorted(enriched["SourceFile"].dropna().unique().tolist())
     selected_sources = st.sidebar.multiselect("Source files", source_options, default=source_options)
 
+    account_options = sorted(enriched["SourceAccount"].dropna().unique().tolist())
+    selected_accounts = st.sidebar.multiselect("Accounts", account_options, default=account_options)
+
     category_options = sorted(enriched["Category"].dropna().unique().tolist())
     selected_categories = st.sidebar.multiselect("Categories", category_options, default=category_options)
 
     merchant_query = st.sidebar.text_input("Merchant contains", value="").strip().lower()
+    include_transfers = st.sidebar.checkbox("Include transfer transactions", value=True)
 
     max_amount = float(enriched[["DebitCHF", "CreditCHF"]].fillna(0).max().max())
     min_amount = st.sidebar.slider("Minimum abs amount (CHF)", 0.0, max(1.0, max_amount), 0.0)
 
     filtered = filter_by_date_range(enriched, start_date, end_date)
     filtered = filtered[filtered["SourceFile"].isin(selected_sources)]
+    filtered = filtered[filtered["SourceAccount"].isin(selected_accounts)]
     filtered = filtered[filtered["Category"].isin(selected_categories)]
 
     if merchant_query:
@@ -310,18 +321,68 @@ def _apply_filters(enriched: pd.DataFrame) -> pd.DataFrame:
             filtered["Merchant"].fillna("").astype(str).str.lower().str.contains(merchant_query, na=False)
         ]
 
-    filtered = filtered[
-        (filtered["DebitCHF"].abs() >= min_amount) | (filtered["CreditCHF"].abs() >= min_amount)
-    ]
+    if not include_transfers:
+        filtered = filtered[~filtered["IsTransfer"]]
+
+    filtered = filtered[(filtered["DebitCHF"].abs() >= min_amount) | (filtered["CreditCHF"].abs() >= min_amount)]
 
     return filtered
+
+
+def _render_review_queue(enriched: pd.DataFrame, category_options: list[str]) -> None:
+    st.header("Review Queue")
+    st.caption("Approve low-confidence categories and override them permanently for this session.")
+
+    queue = review_queue(enriched)
+    if queue.empty:
+        st.success("No transactions currently need review.")
+        return
+
+    display_cols = [
+        "TransactionId",
+        "Date",
+        "Time",
+        "SourceAccount",
+        "Merchant",
+        "DebitCHF",
+        "CreditCHF",
+        "Category",
+        "CategoryConfidence",
+        "CategoryRule",
+        "IsTransfer",
+        "TransferConfidence",
+        "CounterpartyAccount",
+    ]
+    editable = queue[display_cols].copy()
+    editable["ReviewedCategory"] = editable["Category"]
+
+    edited = st.data_editor(
+        editable,
+        column_config={
+            "ReviewedCategory": st.column_config.SelectboxColumn(
+                "Reviewed category", options=sorted(set(category_options + ["Other", "Transfers"]))
+            )
+        },
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    if st.button("Apply reviewed categories"):
+        updates = edited[edited["ReviewedCategory"] != edited["Category"]]
+        if updates.empty:
+            st.info("No review changes detected.")
+        else:
+            for _, row in updates.iterrows():
+                st.session_state["category_overrides"][str(row["TransactionId"])] = str(row["ReviewedCategory"])
+            st.success(f"Applied {len(updates)} category override(s).")
+            st.rerun()
 
 
 def main() -> None:
     _inject_styles()
     _render_header()
 
-    view = st.sidebar.radio(
+    page = st.sidebar.radio(
         "Navigate",
         [
             "Home",
@@ -329,14 +390,25 @@ def main() -> None:
             "Spending",
             "Earnings",
             "Behavior",
+            "Accounts",
+            "Forecast",
+            "Anomalies",
+            "Review Queue",
             "Plans & Recurring",
             "Data Explorer",
+            "Data Health",
             "Metric Guide",
+            "Report Pack",
         ],
     )
 
-    enriched, source_context = _prepare_enriched_data()
+    enriched, source_context, lookup = _prepare_enriched_data()
     if enriched is None or source_context is None:
+        return
+
+    # Review queue should be available on full enriched set.
+    if page == "Review Queue":
+        _render_review_queue(enriched, lookup.get("categories", []))
         return
 
     filtered = _apply_filters(enriched)
@@ -344,7 +416,7 @@ def main() -> None:
         st.warning("No transactions match your current filters.")
         return
 
-    # Shared analytics dataset used by all pages.
+    # Shared analytics.
     kpis = calculate_kpis(filtered)
     daily = daily_net_cashflow(filtered)
     monthly = monthly_cashflow(filtered)
@@ -355,8 +427,13 @@ def main() -> None:
     top_merchants = merchant_summary(filtered, top_n=20)
     income_sources = income_source_summary(filtered, top_n=20)
     recurring = recurring_transaction_candidates(filtered)
+    anomalies = detect_anomalies(filtered)
+    dupes = possible_duplicate_candidates(filtered)
     quality = quality_indicators(filtered)
+    health_table = data_health_report(filtered)
+    accounts = account_summary(filtered)
 
+    # Goals + budgets
     default_budget = {
         category: round(kpis["total_spending"] / max(len(category_table), 1), 2)
         for category in category_table.index
@@ -371,22 +448,51 @@ def main() -> None:
     budget_dict = _parse_json_dict(budget_json, default_budget)
     budget_table = budget_progress(filtered, budget_dict)
 
-    if view == "Home":
+    default_goals = {
+        "Emergency Fund": {"target": 20000, "saved": 5000},
+        "Travel": {"target": 5000, "saved": 1500},
+    }
+    with st.sidebar.expander("Goals setup (JSON)", expanded=False):
+        goals_json = st.text_area(
+            "Goals",
+            value=json.dumps(default_goals, indent=2),
+            key="goals_json",
+            height=200,
+        )
+    goals_dict = _parse_json_dict(goals_json, default_goals)
+    goals_table = goals_progress(goals_dict, kpis["net_cashflow"])
+
+    forecast = forecast_cashflow(filtered, recurring)
+
+    summary_md, report_zip = build_report_pack(filtered, kpis, monthly)
+
+    if page == "Home":
         render_home(kpis, daily, monthly, category_table, quality)
-    elif view == "Cashflow":
+    elif page == "Cashflow":
         render_cashflow(daily, monthly, velocity)
-    elif view == "Spending":
+    elif page == "Spending":
         render_spending(category_table, top_merchants, hourly, weekday_avg)
-    elif view == "Earnings":
+    elif page == "Earnings":
         render_earnings(category_table, income_sources, hourly, weekday_avg)
-    elif view == "Behavior":
+    elif page == "Behavior":
         render_behavior(hourly, weekday_avg, filtered)
-    elif view == "Plans & Recurring":
-        render_subscriptions(recurring, budget_table)
-    elif view == "Data Explorer":
+    elif page == "Accounts":
+        transfers = filtered[filtered["IsTransfer"]].copy()
+        render_accounts(accounts, transfers)
+    elif page == "Forecast":
+        render_forecast(forecast)
+    elif page == "Anomalies":
+        render_anomalies(anomalies, dupes)
+    elif page == "Plans & Recurring":
+        render_subscriptions(recurring, budget_table, goals_table)
+    elif page == "Data Explorer":
         render_data_explorer(filtered, source_context)
-    elif view == "Metric Guide":
+    elif page == "Data Health":
+        render_data_health(health_table, quality)
+    elif page == "Metric Guide":
         render_metric_guide()
+    elif page == "Report Pack":
+        render_report_pack(summary_md, report_zip)
 
 
 if __name__ == "__main__":

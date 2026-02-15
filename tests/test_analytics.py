@@ -1,11 +1,18 @@
 import pandas as pd
 
 from analytics import (
+    apply_category_overrides,
+    build_report_pack,
     calculate_kpis,
     category_breakdown,
     daily_net_cashflow,
+    detect_anomalies,
+    enrich_transaction_intelligence,
+    forecast_cashflow,
     hourly_spending_profile,
+    possible_duplicate_candidates,
     quality_indicators,
+    recurring_transaction_candidates,
     spending_velocity,
     weekday_average_cashflow,
 )
@@ -90,3 +97,72 @@ def test_quality_indicators_are_percentages() -> None:
     assert indicators["other_category_pct"] == 50.0
     assert indicators["unknown_timeofday_pct"] == 50.0
     assert indicators["missing_currency_pct"] == 25.0
+
+
+def test_enrich_transaction_intelligence_detects_transfer() -> None:
+    df = _sample_df()
+    df["Beschreibung1"] = ["Transfer to savings", "Store", "Payroll", "Move to IBAN CH96 0027 4274 1271 2140 B"]
+    df["Beschreibung2"] = ["", "", "", ""]
+    df["Beschreibung3"] = ["", "", "", ""]
+    df["Fussnoten"] = ["", "", "", "Internal account transfer"]
+    df["Merchant"] = df["Beschreibung1"]
+    df["SourceFile"] = "file.csv"
+    df["SourceAccount"] = "CH11"
+    df["Category"] = "Other"
+
+    out = enrich_transaction_intelligence(df)
+    assert bool(out.loc[3, "IsTransfer"]) is True
+    assert out.loc[3, "TransferDirection"] in {"Out", "In", "Unknown"}
+    assert out.loc[3, "CounterpartyAccount"] != ""
+
+
+def test_apply_category_overrides_uses_transaction_id() -> None:
+    df = _sample_df()
+    df["TransactionId"] = ["a", "b", "c", "d"]
+    df["Category"] = ["Other", "Food", "Other", "Transport"]
+
+    out = apply_category_overrides(df, {"a": "Food", "c": "Transfers"})
+    assert out.loc[0, "Category"] == "Food"
+    assert out.loc[2, "Category"] == "Transfers"
+
+
+def test_forecast_and_report_pack_not_empty() -> None:
+    df = _sample_df()
+    df["Merchant"] = ["A", "B", "C", "D"]
+    df["Category"] = ["Food", "Food", "Salary", "Transport"]
+    df["TimeOfDay"] = ["Morning", "Evening", "Morning", "Night"]
+    df["Währung"] = ["CHF", "CHF", "CHF", "CHF"]
+    df["SourceAccount"] = ["CH1", "CH1", "CH1", "CH1"]
+    recurring = recurring_transaction_candidates(df.assign(Date=df["Date"], Merchant=df["Merchant"]))
+    forecast = forecast_cashflow(df, recurring)
+    assert not forecast.empty
+
+    kpis = calculate_kpis(df)
+    monthly = daily_net_cashflow(df).resample("ME").sum(numeric_only=True)
+    summary, bundle = build_report_pack(df, kpis, monthly)
+    assert "PulseLedger Report" in summary
+    assert len(bundle) > 0
+
+
+def test_detect_anomalies_and_duplicate_candidates() -> None:
+    df = pd.DataFrame(
+        [
+            {"Date": "2026-01-01", "Time": "10:00:00", "DebitCHF": 10.0, "CreditCHF": 0.0, "Category": "Food", "Merchant": "Cafe"},
+            {"Date": "2026-01-02", "Time": "10:00:00", "DebitCHF": 12.0, "CreditCHF": 0.0, "Category": "Food", "Merchant": "Cafe"},
+            {"Date": "2026-01-03", "Time": "10:00:00", "DebitCHF": 300.0, "CreditCHF": 0.0, "Category": "Food", "Merchant": "Cafe"},
+            {"Date": "2026-01-03", "Time": "10:00:00", "DebitCHF": 300.0, "CreditCHF": 0.0, "Category": "Food", "Merchant": "Cafe"},
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["SourceFile"] = "f1"
+    df["SourceAccount"] = "CH1"
+    df["Währung"] = "CHF"
+    df["TimeOfDay"] = "Morning"
+    df["TransactionId"] = ["t1", "t2", "t3", "t4"]
+    df["CategoryConfidence"] = 0.9
+    df = enrich_transaction_intelligence(df)
+
+    anomalies = detect_anomalies(df, z_threshold=0.7)
+    dupes = possible_duplicate_candidates(df)
+    assert not anomalies.empty
+    assert not dupes.empty
