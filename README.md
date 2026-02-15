@@ -13,6 +13,7 @@ Now includes a modular finance workspace with:
 - AI Coach (optional OpenAI API key, offline fallback if no key)
 - Savings simulator and month-over-month trend diagnostics in Plan & Improve
 - Deep Analytics tab (cashflow stability, run-rate projections, concentration, size bands, volatility)
+- Chart Builder workspace for custom charts by date/month/category/merchant/account
 
 ## Run locally
 
@@ -25,7 +26,7 @@ python3 -m venv .venv
 CSV files are expected to be semicolon-delimited (`;`).
 You can also upload `.zip` bundles containing many CSV/XLS/XLSX statements.
 For UBS-style files with missing times, ordering now falls back to booking/value dates.
-The app is organized into simple workspaces: Overview, Money In/Out, Plan & Improve, Mapping, Data & QA, Portfolio, Guide.
+The app is organized into simple workspaces: Overview, Money In/Out, Chart Builder, Plan & Improve, Mapping, Data & QA, Portfolio, Guide.
 
 ## Quality checks
 

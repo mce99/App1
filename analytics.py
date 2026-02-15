@@ -174,6 +174,147 @@ def hourly_spending_profile(df: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
+_WEEKDAY_ORDER = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
+
+
+def _chart_axis_series(df: pd.DataFrame, x_axis: str) -> pd.Series:
+    if x_axis == "Date":
+        return pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
+    if x_axis == "Month":
+        return pd.to_datetime(df["Date"], errors="coerce").dt.to_period("M").astype(str)
+    if x_axis == "Weekday":
+        return pd.to_datetime(df["Date"], errors="coerce").dt.day_name()
+    if x_axis == "Hour":
+        hour_from_time = (
+            df["Time"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.split(".")
+            .str[0]
+            .str.extract(r"^(\d{1,2})")[0]
+        )
+        hour = pd.to_numeric(hour_from_time, errors="coerce")
+        if "SortDateTime" in df.columns:
+            hour = hour.fillna(pd.to_datetime(df["SortDateTime"], errors="coerce").dt.hour)
+        return hour
+    if x_axis in df.columns:
+        source = df[x_axis]
+    else:
+        source = pd.Series("Unknown", index=df.index)
+    return source.fillna("Unknown").astype(str).str.strip().replace("", "Unknown")
+
+
+def _sort_chart_index(chart: pd.DataFrame, x_axis: str) -> pd.DataFrame:
+    if chart.empty:
+        return chart
+    if x_axis == "Date":
+        out = chart.copy()
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        out = out[out.index.notna()].sort_index()
+        return out
+    if x_axis == "Month":
+        out = chart.copy()
+        order = pd.Series(
+            pd.to_datetime(out.index.astype(str) + "-01", errors="coerce"), index=out.index
+        ).sort_values()
+        return out.loc[order.index]
+    if x_axis == "Weekday":
+        order_map = {day: idx for idx, day in enumerate(_WEEKDAY_ORDER)}
+        ordered = sorted(chart.index.tolist(), key=lambda value: order_map.get(str(value), 999))
+        return chart.loc[ordered]
+    if x_axis == "Hour":
+        out = chart.copy()
+        out.index = pd.to_numeric(out.index, errors="coerce")
+        out = out[out.index.notna()]
+        out.index = out.index.astype(int)
+        return out.sort_index()
+    return chart.sort_index()
+
+
+def chart_builder_dataset(
+    df: pd.DataFrame,
+    x_axis: str,
+    metric: str,
+    aggregation: str = "Sum",
+    split_by: str = "None",
+    top_n: int = 20,
+    cumulative: bool = False,
+    include_transfers: bool = True,
+) -> pd.DataFrame:
+    """Create aggregated chart dataset for the interactive chart builder."""
+    work = df.copy()
+    if work.empty:
+        return pd.DataFrame()
+    if not include_transfers and "IsTransfer" in work.columns:
+        work = work[~work["IsTransfer"].fillna(False)].copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    work["_x"] = _chart_axis_series(work, x_axis)
+    work = work[work["_x"].notna()].copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    debit = pd.to_numeric(work.get("DebitCHF", 0.0), errors="coerce").fillna(0.0)
+    credit = pd.to_numeric(work.get("CreditCHF", 0.0), errors="coerce").fillna(0.0)
+    if metric == "Spending":
+        work["_value"] = debit
+    elif metric == "Earnings":
+        work["_value"] = credit
+    elif metric == "Net":
+        work["_value"] = credit - debit
+    elif metric == "Transactions":
+        work["_value"] = 1.0
+    else:
+        raise ValueError(f"Unsupported metric: {metric}")
+
+    agg_map = {
+        "Sum": "sum",
+        "Average": "mean",
+        "Median": "median",
+        "Count": "count",
+    }
+    agg_name = "sum" if metric == "Transactions" else agg_map.get(aggregation, "sum")
+    item_limit = max(int(top_n), 1)
+
+    if split_by != "None" and split_by in work.columns:
+        work["_split"] = (
+            work[split_by].fillna("Unknown").astype(str).str.strip().replace("", "Unknown")
+        )
+        split_rank = (
+            work.groupby("_split", dropna=False)["_value"].sum().abs().sort_values(ascending=False)
+        )
+        work = work[work["_split"].isin(split_rank.head(item_limit).index)]
+        grouped = (
+            work.groupby(["_x", "_split"], dropna=False)["_value"]
+            .agg(agg_name)
+            .reset_index(name="Value")
+        )
+        chart = grouped.pivot(index="_x", columns="_split", values="Value").fillna(0.0)
+    else:
+        grouped = work.groupby("_x", dropna=False)["_value"].agg(agg_name)
+        chart = grouped.to_frame(name=metric)
+
+    if x_axis not in {"Date", "Month", "Weekday", "Hour"} and len(chart) > item_limit:
+        rank = chart.abs().sum(axis=1).sort_values(ascending=False)
+        chart = chart.loc[rank.head(item_limit).index]
+
+    chart = _sort_chart_index(chart, x_axis)
+    chart.index.name = x_axis
+    if cumulative:
+        chart = chart.cumsum()
+    return chart.round(4)
+
+
 def merchant_summary(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
     """Top merchants by total spending."""
     grouped = (

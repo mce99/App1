@@ -6,6 +6,7 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
+from analytics import chart_builder_dataset
 from metric_guide import METRIC_GUIDE
 
 
@@ -197,6 +198,85 @@ def render_behavior(hourly: pd.DataFrame, weekday_avg: pd.DataFrame, filtered: p
     with d:
         st.markdown("### Avg net by weekday")
         st.bar_chart(weekday_avg[["Net"]])
+
+
+def render_chart_builder(filtered: pd.DataFrame) -> None:
+    st.header("Chart Builder")
+    st.caption("Create custom charts from your transactions with flexible dimensions and metrics.")
+
+    dimension_candidates = [
+        "Category",
+        "Merchant",
+        "MerchantNormalized",
+        "SourceAccount",
+        "TimeOfDay",
+        "Währung",
+        "Location",
+        "TransferDirection",
+        "IsTransfer",
+    ]
+    dimensions = [col for col in dimension_candidates if col in filtered.columns]
+    x_options = ["Date", "Month", "Weekday", "Hour"] + dimensions
+    split_options = ["None"] + dimensions
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        x_axis = st.selectbox("X axis", x_options, index=1 if "Month" in x_options else 0)
+        chart_type = st.selectbox("Chart type", ["Line", "Bar", "Area"], index=0)
+    with c2:
+        metric = st.selectbox("Metric", ["Spending", "Earnings", "Net", "Transactions"], index=0)
+        split_by = st.selectbox("Split by", split_options, index=0)
+    with c3:
+        if metric == "Transactions":
+            aggregation = st.selectbox("Aggregation", ["Sum"], index=0, disabled=True)
+        else:
+            aggregation = st.selectbox(
+                "Aggregation",
+                ["Sum", "Average", "Median", "Count"],
+                index=0,
+            )
+        top_n = st.slider("Top items", min_value=5, max_value=50, value=20, step=1)
+    with c4:
+        cumulative = st.checkbox("Cumulative view", value=False)
+        include_transfers = True
+        if "IsTransfer" in filtered.columns:
+            include_transfers = st.checkbox(
+                "Include transfers",
+                value=True,
+                help="Disable to focus on external spending/earnings behavior.",
+            )
+
+    chart_data = chart_builder_dataset(
+        filtered,
+        x_axis=x_axis,
+        metric=metric,
+        aggregation=aggregation,
+        split_by=split_by,
+        top_n=int(top_n),
+        cumulative=bool(cumulative),
+        include_transfers=bool(include_transfers),
+    )
+    if chart_data.empty:
+        st.info("No data available for this chart configuration.")
+        return
+
+    st.markdown("### Preview")
+    if chart_type == "Bar":
+        st.bar_chart(chart_data)
+    elif chart_type == "Area":
+        st.area_chart(chart_data)
+    else:
+        st.line_chart(chart_data)
+
+    st.markdown("### Chart data")
+    table = chart_data.reset_index()
+    st.dataframe(table, use_container_width=True)
+    st.download_button(
+        "Download chart data (.csv)",
+        data=table.to_csv(index=False).encode("utf-8"),
+        file_name="chart_builder_export.csv",
+        mime="text/csv",
+    )
 
 
 def render_subscriptions(

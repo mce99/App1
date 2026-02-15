@@ -7,6 +7,7 @@ from analytics import (
     build_report_pack,
     cashflow_stability_metrics,
     calculate_kpis,
+    chart_builder_dataset,
     category_momentum,
     category_volatility,
     category_breakdown,
@@ -362,3 +363,81 @@ def test_deep_analytics_helpers_return_expected_shapes() -> None:
     assert len(size_dist) == 7
     assert "CoeffVar" in volatility.columns
     assert float(run_rate["lookback_months"]) == 2.0
+
+
+def test_chart_builder_dataset_supports_cumulative_daily_series() -> None:
+    chart = chart_builder_dataset(
+        _sample_df(),
+        x_axis="Date",
+        metric="Spending",
+        aggregation="Sum",
+        split_by="None",
+        top_n=20,
+        cumulative=True,
+        include_transfers=True,
+    )
+
+    assert not chart.empty
+    assert chart.index.name == "Date"
+    assert "Spending" in chart.columns
+    assert float(chart["Spending"].iloc[-1]) == 60.0
+
+
+def test_chart_builder_dataset_split_and_transfer_filtering() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "Date": "2026-02-01",
+                "Time": "10:00:00",
+                "DebitCHF": 100.0,
+                "CreditCHF": 0.0,
+                "Category": "Food",
+                "SourceAccount": "A",
+                "IsTransfer": False,
+            },
+            {
+                "Date": "2026-02-02",
+                "Time": "10:00:00",
+                "DebitCHF": 300.0,
+                "CreditCHF": 0.0,
+                "Category": "Transfer",
+                "SourceAccount": "B",
+                "IsTransfer": True,
+            },
+            {
+                "Date": "2026-02-03",
+                "Time": "10:00:00",
+                "DebitCHF": 200.0,
+                "CreditCHF": 0.0,
+                "Category": "Food",
+                "SourceAccount": "A",
+                "IsTransfer": False,
+            },
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    chart_with_transfers = chart_builder_dataset(
+        df,
+        x_axis="Category",
+        metric="Spending",
+        aggregation="Sum",
+        split_by="SourceAccount",
+        top_n=2,
+        cumulative=False,
+        include_transfers=True,
+    )
+    chart_without_transfers = chart_builder_dataset(
+        df,
+        x_axis="Category",
+        metric="Spending",
+        aggregation="Sum",
+        split_by="SourceAccount",
+        top_n=2,
+        cumulative=False,
+        include_transfers=False,
+    )
+
+    assert set(chart_with_transfers.columns.tolist()) == {"A", "B"}
+    assert chart_without_transfers.columns.tolist() == ["A"]
+    assert float(chart_with_transfers.sum().sum()) > float(chart_without_transfers.sum().sum())

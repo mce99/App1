@@ -61,6 +61,7 @@ from dashboard_views import (
     render_accounts,
     render_anomalies,
     render_behavior,
+    render_chart_builder,
     render_cashflow,
     render_data_explorer,
     render_data_health,
@@ -1070,6 +1071,7 @@ def main() -> None:
         [
             "Overview",
             "Money In/Out",
+            "Chart Builder",
             "Plan & Improve",
             "Mapping",
             "Data & QA",
@@ -1096,6 +1098,9 @@ def main() -> None:
 
     if page == "Mapping":
         _render_mapping_studio(filtered, lookup.get("categories", []))
+        return
+    if page == "Chart Builder":
+        render_chart_builder(filtered)
         return
 
     # Shared analytics.
