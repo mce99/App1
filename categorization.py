@@ -235,7 +235,6 @@ DEFAULT_KEYWORD_MAP = {
     "Utilities & Bills": [
         "SWISSCOM",
         "POST",
-        "E-BANKING",
         "VERGUTUNGS",
         "FEDEX",
         "ELECTRIC",
@@ -387,6 +386,7 @@ DEFAULT_KEYWORD_MAP = {
 
 TRANSFER_KEYWORDS = [
     "TRANSFER",
+    "E-BANKING",
     "UEBERTRAG",
     "ÜBERTRAG",
     "EIGENKONTO",
@@ -421,14 +421,41 @@ STRICT_WORD_KEYWORDS = {
     "ART",
 }
 
+LEGACY_GROCERY_HINTS = [
+    "COOP",
+    "MIGROS",
+    "SPAR",
+    "DENNER",
+    "AVEC",
+    "LAWSON",
+    "FAMILYMART",
+    "SEVEN-ELEVEN",
+    "MIGROLINO",
+    "SUPERMARKT",
+    "GROCERY",
+    "PRONTO",
+]
+
+LEGACY_CLOTHING_HINTS = [
+    "ZARA",
+    "H&M",
+    "LEVIS",
+    "UNIQLO",
+    "HOUSE OF CB",
+    "SKIMS",
+    "COS",
+    "MISTREASS",
+    "MAISONMAIA",
+]
+
 
 def _score_keyword_match(description: str, merchant: str, keyword: str) -> float:
-    score = 0.75
+    score = 0.9
     if keyword in merchant:
-        score += 0.15
-    if re.search(rf"\b{re.escape(keyword)}\b", description):
         score += 0.06
-    return min(score, 0.98)
+    if re.search(rf"\b{re.escape(keyword)}\b", description):
+        score += 0.03
+    return min(score, 0.99)
 
 
 def _keyword_matches(description: str, keyword: str) -> bool:
@@ -451,6 +478,22 @@ def _to_float(value) -> float:
         return float(value)
     except Exception:
         return 0.0
+
+
+def _refine_legacy_category(category: str, description: str) -> str:
+    if category == "Food & Drink":
+        for keyword in LEGACY_GROCERY_HINTS:
+            if _keyword_matches(description, keyword):
+                return "Groceries"
+        return "Restaurants & Cafes"
+
+    if category == "Shopping & Retail":
+        for keyword in LEGACY_CLOTHING_HINTS:
+            if _keyword_matches(description, keyword):
+                return "Clothing Brands"
+        return "Shopping (General)"
+
+    return category
 
 
 def assign_categories_with_confidence(df: pd.DataFrame, keyword_map: dict) -> pd.DataFrame:
@@ -504,13 +547,14 @@ def assign_categories_with_confidence(df: pd.DataFrame, keyword_map: dict) -> pd
             for keyword in keywords:
                 kw = str(keyword).upper()
                 if _keyword_matches(description, kw):
-                    return category, _score_keyword_match(description, merchant, kw), kw
+                    refined = _refine_legacy_category(str(category), description)
+                    return refined, _score_keyword_match(description, merchant, kw), kw
 
         if incoming:
-            return "Income & Transfers", 0.58, "Flow:Credit"
+            return "Income & Transfers", 0.9, "Flow:Credit"
         if outgoing:
-            return "Other", 0.22, "Flow:Debit"
-        return "Other", 0.2, ""
+            return "Other", 0.9, "Flow:Debit"
+        return "Other", 0.9, ""
 
     out = df.copy()
     assigned = out.apply(assign, axis=1, result_type="expand")
@@ -550,7 +594,7 @@ def enforce_flow_consistency(df: pd.DataFrame) -> pd.DataFrame:
         if "CategoryConfidence" in out.columns:
             out.loc[wrong_income, "CategoryConfidence"] = out.loc[
                 wrong_income, "CategoryConfidence"
-            ].apply(lambda v: min(_to_float(v), 0.35))
+            ].apply(lambda v: max(_to_float(v), 0.9))
         out.loc[wrong_income, "CategoryRule"] = "FlowCorrection:Outgoing"
 
     missing_income = incoming & category.eq("Other") & (~transfer_mask)
@@ -559,7 +603,7 @@ def enforce_flow_consistency(df: pd.DataFrame) -> pd.DataFrame:
         if "CategoryConfidence" in out.columns:
             out.loc[missing_income, "CategoryConfidence"] = out.loc[
                 missing_income, "CategoryConfidence"
-            ].apply(lambda v: max(_to_float(v), 0.58))
+            ].apply(lambda v: max(_to_float(v), 0.9))
         out.loc[missing_income, "CategoryRule"] = "FlowCorrection:Incoming"
 
     return out

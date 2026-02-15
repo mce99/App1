@@ -21,6 +21,7 @@ Now includes a modular finance workspace with:
 - Added web-researched merchant keyword coverage for UBS-style names (AGROLA/SOCAR/SBB/AVEC/Digitec/Honold/etc.)
 - Added travel-cluster merchant coverage (Barcelona/Japan hotels, Lawson/FamilyMart, ATM-withdrawal detection)
 - Added explicit category split for `Restaurants & Cafes`, `Groceries`, `Gas Stations`, `Shopping (General)`, and `Clothing Brands`
+- Normalized legacy `Food & Drink` / `Shopping & Retail` into the new split buckets and enforced `>=0.90` category confidence outputs
 
 ## Run locally
 

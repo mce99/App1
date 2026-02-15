@@ -443,6 +443,45 @@ def test_assign_categories_differentiates_restaurants_grocery_gas_shopping_and_c
     assert out.loc[4, "Category"] == "Clothing Brands"
 
 
+def test_assign_categories_refines_legacy_buckets_and_sets_high_confidence_floor() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "Beschreibung1": "Moreira Gourmet",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 18.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "Parijan",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 120.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "Incoming payment from contact",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 0.0,
+                "Credit": 50.0,
+            },
+        ]
+    )
+
+    out = assign_categories(df, DEFAULT_KEYWORD_MAP)
+    assert out.loc[0, "Category"] == "Restaurants & Cafes"
+    assert out.loc[1, "Category"] == "Shopping (General)"
+    assert out.loc[2, "Category"] == "Income & Transfers"
+    assert float(out.loc[0, "CategoryConfidence"]) >= 0.9
+    assert float(out.loc[1, "CategoryConfidence"]) >= 0.9
+    assert float(out.loc[2, "CategoryConfidence"]) >= 0.9
+
+
 def test_assign_categories_handles_travel_and_avoids_short_keyword_false_positives() -> None:
     df = pd.DataFrame(
         [
