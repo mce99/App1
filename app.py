@@ -6,6 +6,7 @@ import datetime
 import io
 import json
 import os
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -73,6 +74,7 @@ from market_data import (
     portfolio_totals,
 )
 from local_sources import load_local_statement_uploads
+from mapping_memory import DEFAULT_MAPPING_MEMORY_PATH, load_mapping_memory, save_mapping_memory
 from mapping_rules import (
     apply_pattern_rules,
     learn_pattern_rules,
@@ -173,6 +175,56 @@ def _ensure_state_defaults() -> None:
         st.session_state["local_sync_recursive"] = False
     if "use_local_sync_files" not in st.session_state:
         st.session_state["use_local_sync_files"] = False
+    if "mapping_memory_path" not in st.session_state:
+        st.session_state["mapping_memory_path"] = DEFAULT_MAPPING_MEMORY_PATH
+    if "mapping_memory_loaded" not in st.session_state:
+        st.session_state["mapping_memory_loaded"] = False
+    if "mapping_memory_auto_save" not in st.session_state:
+        st.session_state["mapping_memory_auto_save"] = True
+    if "mapping_memory_last_saved" not in st.session_state:
+        st.session_state["mapping_memory_last_saved"] = ""
+    _load_mapping_memory_once()
+
+
+def _load_mapping_memory_once() -> None:
+    if bool(st.session_state.get("mapping_memory_loaded", False)):
+        return
+    path = str(st.session_state.get("mapping_memory_path", DEFAULT_MAPPING_MEMORY_PATH))
+    try:
+        payload = load_mapping_memory(path)
+    except Exception:
+        st.session_state["mapping_memory_loaded"] = True
+        return
+    st.session_state["category_overrides"] = payload.get("category_overrides", {})
+    st.session_state["merchant_category_rules"] = payload.get("merchant_category_rules", {})
+    st.session_state["pattern_category_rules"] = payload.get("pattern_category_rules", {})
+    st.session_state["mapping_memory_loaded"] = True
+
+
+def _save_mapping_memory_to_disk() -> tuple[bool, str]:
+    path = str(st.session_state.get("mapping_memory_path", DEFAULT_MAPPING_MEMORY_PATH))
+    try:
+        saved = save_mapping_memory(
+            path=path,
+            category_overrides=st.session_state.get("category_overrides", {}),
+            merchant_category_rules=st.session_state.get("merchant_category_rules", {}),
+            pattern_category_rules=st.session_state.get("pattern_category_rules", {}),
+        )
+    except Exception as exc:
+        return False, str(exc)
+
+    try:
+        pretty = str(Path(saved).expanduser())
+    except Exception:
+        pretty = str(saved)
+    st.session_state["mapping_memory_last_saved"] = pretty
+    return True, pretty
+
+
+def _auto_save_mapping_memory() -> None:
+    if not bool(st.session_state.get("mapping_memory_auto_save", True)):
+        return
+    _save_mapping_memory_to_disk()
 
 
 def _apply_merchant_category_rules(df: pd.DataFrame) -> pd.DataFrame:
@@ -489,6 +541,7 @@ def _render_review_queue(enriched: pd.DataFrame, category_options: list[str]) ->
         else:
             for _, row in updates.iterrows():
                 st.session_state["category_overrides"][str(row["TransactionId"])] = str(row["ReviewedCategory"])
+            _auto_save_mapping_memory()
             st.success(f"Applied {len(updates)} category override(s).")
             st.rerun()
 
@@ -570,6 +623,7 @@ def _render_category_lab(enriched: pd.DataFrame, category_options: list[str]) ->
                     st.session_state["merchant_category_rules"][merchant_key] = str(row["FinalCategory"])
                     learned_count += 1
 
+            _auto_save_mapping_memory()
             st.success(
                 f"Applied {len(changed)} transaction labels and learned {learned_count} merchant rule(s)."
             )
@@ -578,6 +632,7 @@ def _render_category_lab(enriched: pd.DataFrame, category_options: list[str]) ->
     with right:
         if st.button("Clear merchant rules", key="category_lab_clear_rules"):
             st.session_state["merchant_category_rules"] = {}
+            _auto_save_mapping_memory()
             st.info("Merchant rules cleared.")
             st.rerun()
 
@@ -605,6 +660,37 @@ def _render_mapping_studio(enriched: pd.DataFrame, category_options: list[str]) 
     c2.metric("Merchant rules", f"{len(merchant_rules):,}")
     c3.metric("Pattern rules", f"{len(pattern_rules):,}")
 
+    with st.expander("Mapping memory", expanded=False):
+        st.text_input("Memory file path", key="mapping_memory_path")
+        st.checkbox("Auto-save mapping changes", key="mapping_memory_auto_save")
+        if st.session_state.get("mapping_memory_last_saved", ""):
+            st.caption(f"Last saved: {st.session_state['mapping_memory_last_saved']}")
+        m1, m2, m3 = st.columns(3)
+        if m1.button("Save memory now", key="mapping_memory_save_now"):
+            ok, info = _save_mapping_memory_to_disk()
+            if ok:
+                st.success(f"Saved mapping memory: {info}")
+            else:
+                st.error(f"Failed to save mapping memory: {info}")
+        if m2.button("Reload memory", key="mapping_memory_reload"):
+            path = str(st.session_state.get("mapping_memory_path", DEFAULT_MAPPING_MEMORY_PATH))
+            try:
+                payload = load_mapping_memory(path)
+                st.session_state["category_overrides"] = payload.get("category_overrides", {})
+                st.session_state["merchant_category_rules"] = payload.get("merchant_category_rules", {})
+                st.session_state["pattern_category_rules"] = payload.get("pattern_category_rules", {})
+                st.success("Mapping memory reloaded.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Failed to load mapping memory: {exc}")
+        if m3.button("Reset mapping memory", key="mapping_memory_reset"):
+            st.session_state["category_overrides"] = {}
+            st.session_state["merchant_category_rules"] = {}
+            st.session_state["pattern_category_rules"] = {}
+            _auto_save_mapping_memory()
+            st.warning("Mapping memory reset.")
+            st.rerun()
+
     st.markdown("### Learn rules from your labels")
     l1, l2, l3 = st.columns(3)
     min_examples = int(l1.number_input("Min examples per token", min_value=2, max_value=10, value=3, step=1))
@@ -630,6 +716,7 @@ def _render_mapping_studio(enriched: pd.DataFrame, category_options: list[str]) 
         else:
             for _, row in learned.iterrows():
                 st.session_state["pattern_category_rules"][str(row["Token"]).upper().strip()] = str(row["Category"])
+            _auto_save_mapping_memory()
             st.success(f"Learned or refreshed {len(learned)} pattern rule(s).")
             st.rerun()
 
@@ -646,6 +733,7 @@ def _render_mapping_studio(enriched: pd.DataFrame, category_options: list[str]) 
             st.caption("No merchant rules.")
         if st.button("Clear merchant rules", key="mapping_clear_merchant"):
             st.session_state["merchant_category_rules"] = {}
+            _auto_save_mapping_memory()
             st.rerun()
 
     with rule_right:
@@ -660,6 +748,7 @@ def _render_mapping_studio(enriched: pd.DataFrame, category_options: list[str]) 
             st.caption("No pattern rules.")
         if st.button("Clear pattern rules", key="mapping_clear_pattern"):
             st.session_state["pattern_category_rules"] = {}
+            _auto_save_mapping_memory()
             st.rerun()
 
     st.markdown("### Map candidate transactions")
@@ -720,6 +809,13 @@ def _render_mapping_studio(enriched: pd.DataFrame, category_options: list[str]) 
     candidates["LearnPatternRule"] = False
     candidates["PatternToken"] = candidates["SuggestedToken"]
 
+    suggestion_stats = candidates["SuggestionSource"].value_counts(dropna=False).to_dict()
+    mapped_suggestions = int(len(candidates) - suggestion_stats.get("Unmapped", 0))
+    s1, s2, s3 = st.columns(3)
+    s1.metric("Candidate rows", f"{len(candidates):,}")
+    s2.metric("Auto-suggested", f"{mapped_suggestions:,}")
+    s3.metric("Needs manual mapping", f"{int(suggestion_stats.get('Unmapped', 0)):,}")
+
     editable_cols = [
         "TransactionId",
         "Date",
@@ -777,6 +873,7 @@ def _render_mapping_studio(enriched: pd.DataFrame, category_options: list[str]) 
                 st.session_state["pattern_category_rules"][token_text] = str(row["FinalCategory"])
                 pattern_count += 1
 
+        _auto_save_mapping_memory()
         st.success(
             f"Applied {len(changed)} transaction labels, learned {merchant_count} merchant rules, and {pattern_count} pattern rules."
         )
@@ -965,7 +1062,6 @@ def main() -> None:
             "Money In/Out",
             "Plan & Improve",
             "Mapping",
-            "Bank Sync",
             "Data & QA",
             "Portfolio",
             "Guide",
@@ -977,9 +1073,6 @@ def main() -> None:
         return
     if page == "Guide":
         render_metric_guide()
-        return
-    if page == "Bank Sync":
-        _render_bank_sync()
         return
 
     enriched, source_context, lookup = _prepare_enriched_data()
