@@ -160,6 +160,36 @@ def _configure_timeframe_controls(df: pd.DataFrame) -> tuple[datetime.date, date
     return st.session_state[key]
 
 
+def _build_statement_context(df: pd.DataFrame) -> pd.DataFrame:
+    summary = (
+        df.groupby("SourceFile", dropna=False)
+        .agg(
+            LoadedTransactions=("SourceFile", "size"),
+            LoadedFrom=("Date", "min"),
+            LoadedTo=("Date", "max"),
+        )
+        .reset_index()
+    )
+
+    optional_cols = [
+        "StatementAccountNumber",
+        "StatementIBAN",
+        "StatementFrom",
+        "StatementTo",
+        "StatementCurrency",
+        "StatementTransactions",
+    ]
+    for col in optional_cols:
+        if col in df.columns:
+            summary[col] = (
+                df.groupby("SourceFile", dropna=False)[col]
+                .first()
+                .reset_index(drop=True)
+            )
+
+    return summary
+
+
 def main() -> None:
     _inject_styles()
     _render_header()
@@ -226,6 +256,10 @@ def main() -> None:
         keyword_map = DEFAULT_KEYWORD_MAP
 
     enriched = assign_categories(apply_currency_conversion(df, conv_rates), keyword_map)
+    source_context = _build_statement_context(enriched)
+
+    with st.expander("Source file context (detected from statement headers)", expanded=False):
+        st.dataframe(source_context, use_container_width=True)
 
     start_date, end_date = _configure_timeframe_controls(enriched)
 

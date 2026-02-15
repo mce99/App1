@@ -119,3 +119,50 @@ def test_merge_transactions_deduplicates_overlap() -> None:
 
 def test_classify_time_of_day_invalid_returns_unknown() -> None:
     assert classify_time_of_day("bad-time") == "Unknown"
+
+
+def test_load_transactions_detects_header_and_context_with_metadata_rows() -> None:
+    csv_content = "\n".join(
+        [
+            "Kontonummer:;0000000",
+            "Von:;2025-06-07 00:00:00",
+            "Bis:;2026-02-13 00:00:00",
+            "Bewertet in:;CHF",
+            "Anzahl Transaktionen in diesem Zeitraum:;2",
+            "Abschlussdatum;Abschlusszeit;Währung;Belastung;Gutschrift;Beschreibung1;Beschreibung2;Beschreibung3;Fussnoten;;;",
+            "2026-02-13;17:12:00;CHF;-35.45;0;UBER EATS;AMSTERDAM;20828393;Zahlung Debitkarte;Transaktions-Nr. 1;Kosten: 1.00",
+        ]
+    )
+    out = load_transactions(DummyUpload("styled.csv", csv_content))
+
+    assert len(out) == 1
+    assert out.loc[0, "StatementCurrency"] == "CHF"
+    assert str(out.loc[0, "StatementFrom"]).startswith("2025-06-07")
+    assert out.loc[0, "StatementTransactions"] == 2
+    assert "Transaktions-Nr. 1" in out.loc[0, "Fussnoten"]
+    assert "Kosten: 1.00" in out.loc[0, "Fussnoten"]
+
+
+def test_load_transactions_maps_english_ubs_headers() -> None:
+    csv_content = "\n".join(
+        [
+            "Account number:;1234 12345678.12",
+            "IBAN:;CH20 0011 2233 4455 6677 B",
+            "From:;2025-01-01",
+            "Until:;2025-12-31",
+            "Valued in:;CHF",
+            "Numbers of transactions in this period:;1",
+            "",
+            "Trade date;Trade time;Booking date;Value date;Currency;Debit;Credit;Transaction no.;Description1;Description2;Description3;Footnotes;",
+            "2025-01-01;00:11:22;2025-01-01;2025-01-01;CHF;-137.00;;4825794DP1572581029;John Doe;Standing order;Reference details;Costs: Standing order domestic;",
+        ]
+    )
+
+    out = load_transactions(DummyUpload("english_style.csv", csv_content))
+
+    assert len(out) == 1
+    assert out.loc[0, "StatementAccountNumber"] == "1234 12345678.12"
+    assert out.loc[0, "StatementIBAN"] == "CH20 0011 2233 4455 6677 B"
+    assert out.loc[0, "StatementCurrency"] == "CHF"
+    assert out.loc[0, "Belastung"] == -137.0
+    assert out.loc[0, "Transaktions-Nr."] == "4825794DP1572581029"
