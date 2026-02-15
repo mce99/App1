@@ -103,30 +103,144 @@ def _inject_styles() -> None:
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700&display=swap');
-        html, body, [class*="css"] { font-family: 'Outfit', sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+        :root {
+            --pl-bg: #eef2f7;
+            --pl-surface: #ffffff;
+            --pl-surface-soft: #f6f8fb;
+            --pl-border: #d5deea;
+            --pl-text: #1b2e43;
+            --pl-muted: #61758c;
+            --pl-brand: #1f4e79;
+            --pl-brand-deep: #173b5f;
+            --pl-brand-accent: #0e6ea8;
+        }
+        html, body, [class*="css"] {
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: var(--pl-text);
+        }
         .stApp {
             background:
-              radial-gradient(1200px 420px at 12% 0%, rgba(40, 214, 255, 0.15), transparent 58%),
-              radial-gradient(1000px 520px at 90% 0%, rgba(95, 255, 163, 0.14), transparent 62%),
-              linear-gradient(180deg, #f6fbff 0%, #eef6ff 100%);
+                linear-gradient(180deg, rgba(28, 65, 103, 0.08) 0%, rgba(255, 255, 255, 0) 280px),
+                repeating-linear-gradient(
+                    90deg,
+                    rgba(31, 78, 121, 0.028) 0,
+                    rgba(31, 78, 121, 0.028) 1px,
+                    transparent 1px,
+                    transparent 30px
+                ),
+                radial-gradient(1400px 400px at 85% -20%, rgba(14, 110, 168, 0.16), transparent 70%),
+                var(--pl-bg);
+        }
+        h1, h2, h3, h4, h5 {
+            color: var(--pl-text);
+            letter-spacing: 0.15px;
+        }
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #1b3e63 0%, #122d4a 100%);
+            border-right: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] .stRadio label {
+            color: #e8eff8 !important;
+        }
+        [data-testid="stSidebar"] h1,
+        [data-testid="stSidebar"] h2,
+        [data-testid="stSidebar"] h3 {
+            color: #f5f9ff !important;
+        }
+        [data-testid="stSidebar"] .stRadio [aria-checked="true"] + div p {
+            color: #ffffff !important;
+            font-weight: 700 !important;
         }
         .hero {
-            margin-bottom: 0.6rem;
-            padding: 1rem 1.2rem;
-            border: 1px solid rgba(30, 80, 145, 0.23);
-            border-radius: 14px;
-            background: rgba(255,255,255,0.82);
-            box-shadow: 0 16px 36px rgba(42, 77, 140, 0.12);
-        }
-        .hero h1 { margin: 0; letter-spacing: 0.3px; }
-        .hero p { margin: 0.35rem 0 0 0; color: #244674; }
-        [data-testid="stMetric"] {
-            background: rgba(255,255,255,0.90);
-            border: 1px solid rgba(45, 88, 162, 0.25);
+            margin-bottom: 0.8rem;
+            padding: 1.15rem 1.35rem;
+            border: 1px solid var(--pl-border);
+            border-left: 6px solid var(--pl-brand);
             border-radius: 12px;
-            padding: 0.45rem 0.6rem;
-            box-shadow: 0 8px 20px rgba(40, 68, 120, 0.10);
+            background: var(--pl-surface);
+            box-shadow: 0 8px 24px rgba(20, 45, 72, 0.08);
+        }
+        .hero-kicker {
+            margin: 0 0 0.25rem 0;
+            color: var(--pl-brand);
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        .hero h1 {
+            margin: 0;
+            letter-spacing: 0.2px;
+            font-size: 1.75rem;
+        }
+        .hero p {
+            margin: 0.35rem 0 0 0;
+            color: var(--pl-muted);
+            max-width: 760px;
+        }
+        [data-testid="stMetric"] {
+            background: var(--pl-surface);
+            border: 1px solid var(--pl-border);
+            border-radius: 10px;
+            padding: 0.5rem 0.65rem;
+            box-shadow: 0 4px 14px rgba(23, 50, 78, 0.06);
+        }
+        [data-testid="stMetricLabel"] {
+            color: var(--pl-muted);
+            font-weight: 600;
+        }
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.2rem;
+            border-bottom: 1px solid var(--pl-border);
+            padding-bottom: 0.1rem;
+        }
+        .stTabs [data-baseweb="tab"] {
+            background: var(--pl-surface-soft);
+            border: 1px solid var(--pl-border);
+            border-radius: 8px 8px 0 0;
+            color: var(--pl-muted);
+            font-weight: 600;
+            padding: 0.4rem 0.8rem;
+        }
+        .stTabs [aria-selected="true"] {
+            background: var(--pl-surface);
+            color: var(--pl-text);
+            border-bottom-color: var(--pl-surface);
+        }
+        .stButton > button,
+        .stDownloadButton > button {
+            border: 0;
+            border-radius: 8px;
+            background: linear-gradient(180deg, var(--pl-brand) 0%, var(--pl-brand-deep) 100%);
+            color: #ffffff;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+        }
+        .stButton > button:hover,
+        .stDownloadButton > button:hover {
+            background: linear-gradient(180deg, #255a8d 0%, #1a446b 100%);
+        }
+        .stTextInput input,
+        .stNumberInput input,
+        .stTextArea textarea,
+        [data-baseweb="select"] > div {
+            border-radius: 8px !important;
+            border: 1px solid var(--pl-border) !important;
+        }
+        [data-testid="stDataFrame"],
+        [data-testid="stTable"] {
+            border: 1px solid var(--pl-border);
+            border-radius: 10px;
+            background: var(--pl-surface);
+            box-shadow: 0 3px 10px rgba(18, 43, 67, 0.05);
+        }
+        details[data-testid="stExpander"] {
+            border: 1px solid var(--pl-border);
+            border-radius: 10px;
+            background: var(--pl-surface);
         }
         </style>
         """,
@@ -138,8 +252,12 @@ def _render_header() -> None:
     st.markdown(
         """
         <div class="hero">
-          <h1>PulseLedger</h1>
-          <p>Simple money clarity: upload statements, choose timeframe, see where your money goes.</p>
+          <p class="hero-kicker">Executive Finance Intelligence</p>
+          <h1>PulseLedger Command Center</h1>
+          <p>
+            Corporate-grade visibility into spending, earnings, risk signals, and portfolio exposure.
+            Upload statements, select a timeframe, and steer with data.
+          </p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -147,7 +265,7 @@ def _render_header() -> None:
 
 
 def _render_quick_start() -> None:
-    with st.expander("How to use this app (30 seconds)", expanded=False):
+    with st.expander("Executive quick start (30 seconds)", expanded=False):
         st.markdown(
             "\n".join(
                 [
@@ -1067,7 +1185,7 @@ def main() -> None:
     _ensure_state_defaults()
 
     page = st.sidebar.radio(
-        "Workspace",
+        "Executive Workspaces",
         [
             "Overview",
             "Money In/Out",

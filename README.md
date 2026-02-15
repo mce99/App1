@@ -14,6 +14,7 @@ Now includes a modular finance workspace with:
 - Savings simulator and month-over-month trend diagnostics in Plan & Improve
 - Deep Analytics tab (cashflow stability, run-rate projections, concentration, size bands, volatility)
 - Chart Builder workspace for custom charts by date/month/category/merchant/account with daily/weekly/monthly intervals
+- Corporate-style executive UI theme for clean, boardroom-ready dashboards
 
 ## Run locally
 
