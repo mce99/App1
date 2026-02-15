@@ -33,14 +33,17 @@ from analytics import (
     hourly_spending_profile,
     ingestion_quality_by_source,
     income_source_summary,
+    category_momentum,
     merchant_insights,
     monthly_salary_estimate,
     merchant_summary,
+    monthly_trend_diagnostics,
     monthly_cashflow,
     possible_duplicate_candidates,
     quality_indicators,
     recurring_transaction_candidates,
     review_queue,
+    savings_scenario,
     spending_recommendations,
     spending_velocity,
     weekday_average_cashflow,
@@ -1162,6 +1165,8 @@ def main() -> None:
         benchmark_cfg=benchmark_cfg,
     )
     recommendations = spending_recommendations(filtered, benchmark_table)
+    trend_table = monthly_trend_diagnostics(filtered, lookback_months=12)
+    momentum_table = category_momentum(filtered)
     action_plan = generate_agent_action_plan(
         kpis=kpis,
         quality=quality,
@@ -1202,10 +1207,11 @@ def main() -> None:
             render_spending_map(map_points)
     elif page == "Plan & Improve":
         forecast = forecast_cashflow(filtered, recurring)
-        tab_actions, tab_insights, tab_lab, tab_ai, tab_anom, tab_forecast, tab_plans = st.tabs(
+        tab_actions, tab_insights, tab_sim, tab_lab, tab_ai, tab_anom, tab_forecast, tab_plans = st.tabs(
             [
                 "Action queue",
                 "Insights",
+                "Simulator",
                 "Category Lab",
                 "AI Coach",
                 "Anomalies",
@@ -1217,6 +1223,62 @@ def main() -> None:
             render_agent_console(action_plan, ingestion_quality)
         with tab_insights:
             render_insights(salary_info, benchmark_table, recommendations, merchant_table, balance_table)
+        with tab_sim:
+            st.markdown("### Savings scenario simulator")
+            left, right = st.columns(2)
+            with left:
+                monthly_target = st.number_input(
+                    "Target extra monthly savings (CHF)",
+                    min_value=0.0,
+                    value=1000.0,
+                    step=50.0,
+                )
+                max_cut_pct = st.slider(
+                    "Max cut per category (%)",
+                    min_value=5,
+                    max_value=60,
+                    value=20,
+                    step=5,
+                )
+                excluded_categories = st.multiselect(
+                    "Protected categories (do not cut)",
+                    options=sorted(category_table.index.astype(str).tolist()),
+                    default=["Utilities & Bills"] if "Utilities & Bills" in category_table.index else [],
+                )
+                scenario = savings_scenario(
+                    filtered,
+                    target_extra_savings_chf=float(monthly_target),
+                    max_cut_pct=float(max_cut_pct) / 100.0,
+                    excluded_categories=excluded_categories,
+                )
+            with right:
+                st.markdown("### Monthly trend diagnostics")
+                if trend_table.empty:
+                    st.info("Not enough monthly data for trend diagnostics.")
+                else:
+                    st.line_chart(
+                        trend_table.set_index("Month")[["Spending", "Earnings", "Net"]]
+                    )
+                    st.dataframe(trend_table.tail(12), use_container_width=True)
+
+            if scenario.empty:
+                st.info("No spend categories available for scenario generation.")
+            else:
+                planned_cut = float(scenario["SuggestedCutCHF"].sum())
+                potential_cut = float(scenario["MaxCutCHF"].sum())
+                coverage = (planned_cut / float(monthly_target) * 100.0) if monthly_target > 0 else 0.0
+                k1, k2, k3 = st.columns(3)
+                k1.metric("Planned cut (CHF)", f"{planned_cut:,.2f}")
+                k2.metric("Max potential cut (CHF)", f"{potential_cut:,.2f}")
+                k3.metric("Target coverage", f"{coverage:.1f}%")
+                st.bar_chart(scenario.set_index("Category")[["SuggestedCutCHF", "MaxCutCHF"]])
+                st.dataframe(scenario, use_container_width=True, hide_index=True)
+
+            st.markdown("### Category momentum (latest month vs prior)")
+            if momentum_table.empty:
+                st.info("Not enough month-over-month category data yet.")
+            else:
+                st.dataframe(momentum_table.head(20), use_container_width=True, hide_index=True)
         with tab_lab:
             _render_category_lab(enriched, lookup.get("categories", []))
         with tab_ai:

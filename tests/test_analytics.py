@@ -6,6 +6,7 @@ from analytics import (
     benchmark_assessment,
     build_report_pack,
     calculate_kpis,
+    category_momentum,
     category_breakdown,
     daily_net_cashflow,
     detect_anomalies,
@@ -14,11 +15,13 @@ from analytics import (
     generate_agent_action_plan,
     hourly_spending_profile,
     ingestion_quality_by_source,
+    monthly_trend_diagnostics,
     monthly_salary_estimate,
     merchant_insights,
     possible_duplicate_candidates,
     quality_indicators,
     recurring_transaction_candidates,
+    savings_scenario,
     spending_recommendations,
     spending_velocity,
     weekday_average_cashflow,
@@ -270,3 +273,52 @@ def test_ingestion_quality_and_agent_plan() -> None:
     )
     assert not plan.empty
     assert int(plan["Priority"].min()) == 1
+
+
+def test_monthly_trend_diagnostics_and_category_momentum() -> None:
+    df = pd.DataFrame(
+        [
+            {"Date": "2026-01-01", "DebitCHF": 100.0, "CreditCHF": 0.0, "Category": "Food"},
+            {"Date": "2026-01-10", "DebitCHF": 50.0, "CreditCHF": 0.0, "Category": "Transport"},
+            {"Date": "2026-02-01", "DebitCHF": 180.0, "CreditCHF": 0.0, "Category": "Food"},
+            {"Date": "2026-02-15", "DebitCHF": 40.0, "CreditCHF": 0.0, "Category": "Transport"},
+            {"Date": "2026-02-20", "DebitCHF": 0.0, "CreditCHF": 500.0, "Category": "Income"},
+            {"Date": "2026-03-01", "DebitCHF": 200.0, "CreditCHF": 0.0, "Category": "Food"},
+            {"Date": "2026-03-10", "DebitCHF": 20.0, "CreditCHF": 0.0, "Category": "Transport"},
+            {"Date": "2026-03-20", "DebitCHF": 0.0, "CreditCHF": 550.0, "Category": "Income"},
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    trend = monthly_trend_diagnostics(df, lookback_months=12)
+    momentum = category_momentum(df)
+
+    assert not trend.empty
+    assert "SpendingMoMCHF" in trend.columns
+    assert "NetVolatility3M" in trend.columns
+    assert not momentum.empty
+    assert "ChangeCHF" in momentum.columns
+
+
+def test_savings_scenario_respects_exclusions() -> None:
+    df = pd.DataFrame(
+        [
+            {"Date": "2026-01-01", "DebitCHF": 500.0, "CreditCHF": 0.0, "Category": "Food"},
+            {"Date": "2026-01-15", "DebitCHF": 400.0, "CreditCHF": 0.0, "Category": "Transport"},
+            {"Date": "2026-02-01", "DebitCHF": 600.0, "CreditCHF": 0.0, "Category": "Food"},
+            {"Date": "2026-02-15", "DebitCHF": 300.0, "CreditCHF": 0.0, "Category": "Transport"},
+            {"Date": "2026-02-20", "DebitCHF": 800.0, "CreditCHF": 0.0, "Category": "Utilities & Bills"},
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    scenario = savings_scenario(
+        df,
+        target_extra_savings_chf=300.0,
+        max_cut_pct=0.2,
+        excluded_categories=["Utilities & Bills"],
+    )
+
+    assert not scenario.empty
+    assert "Utilities & Bills" not in scenario["Category"].tolist()
+    assert float(scenario["SuggestedCutCHF"].sum()) <= 300.0 + 1e-6

@@ -964,6 +964,115 @@ def spending_recommendations(df: pd.DataFrame, benchmark_table: pd.DataFrame) ->
     return pd.DataFrame(recommendations).sort_values("Priority").reset_index(drop=True)
 
 
+def monthly_trend_diagnostics(df: pd.DataFrame, lookback_months: int = 12) -> pd.DataFrame:
+    """Monthly trend diagnostics with momentum and volatility features."""
+    monthly = monthly_cashflow(df)
+    if monthly.empty:
+        return pd.DataFrame()
+
+    out = monthly.copy()
+    if lookback_months > 0:
+        out = out.tail(int(lookback_months))
+
+    out["SpendingMoMCHF"] = out["Spending"].diff()
+    out["EarningsMoMCHF"] = out["Earnings"].diff()
+    out["NetMoMCHF"] = out["Net"].diff()
+    out["SpendingMoMPct"] = out["Spending"].pct_change() * 100.0
+    out["EarningsMoMPct"] = out["Earnings"].pct_change() * 100.0
+    out["Net3MAvg"] = out["Net"].rolling(window=3, min_periods=1).mean()
+    out["Spending3MAvg"] = out["Spending"].rolling(window=3, min_periods=1).mean()
+    out["NetVolatility3M"] = out["Net"].rolling(window=3, min_periods=2).std().fillna(0.0)
+    return out.reset_index()
+
+
+def category_momentum(df: pd.DataFrame) -> pd.DataFrame:
+    """Category-level monthly momentum (latest month vs prior month)."""
+    work = df.copy()
+    if work.empty:
+        return pd.DataFrame()
+    work["Month"] = work["Date"].dt.to_period("M").astype(str)
+    spend = work[work["DebitCHF"] > 0]
+    if spend.empty:
+        return pd.DataFrame()
+
+    grouped = spend.groupby(["Category", "Month"], dropna=False)["DebitCHF"].sum().unstack(fill_value=0.0)
+    if grouped.shape[1] < 2:
+        return pd.DataFrame()
+
+    months = sorted(grouped.columns.tolist())
+    prev_month = months[-2]
+    latest_month = months[-1]
+    out = pd.DataFrame(
+        {
+            "Category": grouped.index.astype(str),
+            "PrevMonth": prev_month,
+            "LatestMonth": latest_month,
+            "PrevSpendingCHF": grouped[prev_month].astype(float).values,
+            "LatestSpendingCHF": grouped[latest_month].astype(float).values,
+        }
+    )
+    out["ChangeCHF"] = out["LatestSpendingCHF"] - out["PrevSpendingCHF"]
+    out["ChangePct"] = out.apply(
+        lambda row: (row["ChangeCHF"] / row["PrevSpendingCHF"] * 100.0) if row["PrevSpendingCHF"] > 0 else 0.0,
+        axis=1,
+    )
+    return out.sort_values("ChangeCHF", ascending=False).reset_index(drop=True)
+
+
+def savings_scenario(
+    df: pd.DataFrame,
+    target_extra_savings_chf: float,
+    max_cut_pct: float = 0.20,
+    excluded_categories: list[str] | None = None,
+) -> pd.DataFrame:
+    """Build a category-level cut plan to reach an extra savings target."""
+    work = df.copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    excluded = {str(item) for item in (excluded_categories or [])}
+    excluded.update({"Transfers"})
+
+    work["Month"] = work["Date"].dt.to_period("M").astype(str)
+    spend = work[(work["DebitCHF"] > 0) & (~work["Category"].isin(excluded))]
+    if spend.empty:
+        return pd.DataFrame()
+
+    avg_monthly = (
+        spend.groupby(["Category", "Month"], dropna=False)["DebitCHF"]
+        .sum()
+        .groupby("Category")
+        .mean()
+        .sort_values(ascending=False)
+    )
+    if avg_monthly.empty:
+        return pd.DataFrame()
+
+    max_cut_pct = min(max(float(max_cut_pct), 0.0), 1.0)
+    remaining = max(float(target_extra_savings_chf), 0.0)
+    rows: list[dict[str, object]] = []
+
+    for category, avg_spend in avg_monthly.items():
+        avg_spend = float(avg_spend)
+        max_cut = avg_spend * max_cut_pct
+        suggested_cut = min(max_cut, remaining) if remaining > 0 else 0.0
+        cut_pct = (suggested_cut / avg_spend * 100.0) if avg_spend > 0 else 0.0
+        remaining_after = max(remaining - suggested_cut, 0.0)
+        rows.append(
+            {
+                "Category": str(category),
+                "AvgMonthlySpendCHF": round(avg_spend, 2),
+                "MaxCutCHF": round(max_cut, 2),
+                "SuggestedCutCHF": round(suggested_cut, 2),
+                "SuggestedCutPct": round(cut_pct, 2),
+                "TargetRemainingCHF": round(remaining_after, 2),
+            }
+        )
+        remaining = remaining_after
+
+    return pd.DataFrame(rows)
+
+
 def balance_timeline(df: pd.DataFrame) -> pd.DataFrame:
     """Account balance trend if statement includes Saldo values."""
     if "Saldo" not in df.columns:

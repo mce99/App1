@@ -11,6 +11,7 @@ Now includes a modular finance workspace with:
 - Mapping Studio page for manual mapping + smart token-rule learning
 - Mapping memory persistence (rules + labels survive app restarts)
 - AI Coach (optional OpenAI API key, offline fallback if no key)
+- Savings simulator and month-over-month trend diagnostics in Plan & Improve
 
 ## Run locally
 
