@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import io
 import json
 
 import pandas as pd
@@ -12,6 +13,8 @@ from analytics import (
     account_summary,
     apply_category_overrides,
     apply_currency_conversion,
+    balance_timeline,
+    benchmark_assessment,
     budget_progress,
     build_report_pack,
     calculate_kpis,
@@ -25,12 +28,15 @@ from analytics import (
     goals_progress,
     hourly_spending_profile,
     income_source_summary,
+    merchant_insights,
+    monthly_salary_estimate,
     merchant_summary,
     monthly_cashflow,
     possible_duplicate_candidates,
     quality_indicators,
     recurring_transaction_candidates,
     review_queue,
+    spending_recommendations,
     spending_velocity,
     weekday_average_cashflow,
 )
@@ -45,12 +51,15 @@ from dashboard_views import (
     render_earnings,
     render_forecast,
     render_home,
+    render_insights,
     render_metric_guide,
     render_portfolio,
     render_report_pack,
+    render_spending_map,
     render_spending,
     render_subscriptions,
 )
+from geo_insights import spending_location_points
 from market_data import (
     evaluate_stock_positions,
     fetch_stock_quotes,
@@ -412,8 +421,14 @@ def _cached_stock_quotes(symbols: tuple[str, ...]) -> pd.DataFrame:
 
 @st.cache_data(ttl=180, show_spinner=False)
 def _cached_wallet_balances(wallets_json: str, quote_currency: str) -> pd.DataFrame:
-    wallets = pd.read_json(wallets_json, orient="records")
+    wallets = pd.read_json(io.StringIO(wallets_json), orient="records")
     return fetch_wallet_balances(wallets, quote_currency=quote_currency)
+
+
+@st.cache_data(ttl=7200, show_spinner=False)
+def _cached_spending_map_points(transactions_json: str, min_spending: float) -> pd.DataFrame:
+    df = pd.read_json(io.StringIO(transactions_json), orient="records")
+    return spending_location_points(df, min_spending_chf=min_spending)
 
 
 def _render_portfolio_page() -> None:
@@ -487,6 +502,8 @@ def main() -> None:
         [
             "Home",
             "Portfolio",
+            "Insights & Optimization",
+            "Spending Map",
             "Cashflow",
             "Spending",
             "Earnings",
@@ -537,6 +554,8 @@ def main() -> None:
     quality = quality_indicators(filtered)
     health_table = data_health_report(filtered)
     accounts = account_summary(filtered)
+    balance_table = balance_timeline(filtered)
+    merchant_table = merchant_insights(filtered, top_n=25)
 
     # Goals + budgets
     default_budget = {
@@ -567,12 +586,49 @@ def main() -> None:
     goals_dict = _parse_json_dict(goals_json, default_goals)
     goals_table = goals_progress(goals_dict, kpis["net_cashflow"])
 
+    default_benchmarks = {
+        "NeedsMaxPct": 50,
+        "WantsMaxPct": 30,
+        "SavingsMinPct": 20,
+        "GroceriesMaxPct": 10,
+        "DiningMaxPct": 8,
+        "SubscriptionsMaxPct": 5,
+        "TransportMaxPct": 15,
+    }
+    with st.sidebar.expander("Benchmark setup (JSON)", expanded=False):
+        benchmark_json = st.text_area(
+            "Benchmarks",
+            value=json.dumps(default_benchmarks, indent=2),
+            key="benchmark_json",
+            height=220,
+        )
+    benchmark_cfg = _parse_json_dict(benchmark_json, default_benchmarks)
+
+    salary_info = monthly_salary_estimate(filtered)
+    benchmark_table = benchmark_assessment(
+        filtered,
+        avg_monthly_salary=float(salary_info.get("avg_monthly_salary", 0.0) or 0.0),
+        benchmark_cfg=benchmark_cfg,
+    )
+    recommendations = spending_recommendations(filtered, benchmark_table)
+
+    with st.sidebar.expander("Map settings", expanded=False):
+        min_spending_for_map = st.slider("Min spending per point (CHF)", 0.0, 500.0, 20.0, key="map_min_spending")
+
+    map_cols = [col for col in ["Date", "Location", "DebitCHF", "Merchant", "Category", "SourceAccount"] if col in filtered.columns]
+    map_payload = filtered[map_cols].fillna("").to_json(orient="records", date_format="iso")
+    map_points = _cached_spending_map_points(map_payload, float(min_spending_for_map))
+
     forecast = forecast_cashflow(filtered, recurring)
 
     summary_md, report_zip = build_report_pack(filtered, kpis, monthly)
 
     if page == "Home":
         render_home(kpis, daily, monthly, category_table, quality)
+    elif page == "Insights & Optimization":
+        render_insights(salary_info, benchmark_table, recommendations, merchant_table, balance_table)
+    elif page == "Spending Map":
+        render_spending_map(map_points)
     elif page == "Cashflow":
         render_cashflow(daily, monthly, velocity)
     elif page == "Spending":

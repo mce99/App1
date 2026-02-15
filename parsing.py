@@ -356,14 +356,14 @@ def _drop_statement_noise(df: pd.DataFrame) -> pd.DataFrame:
     drop_cols = [
         col
         for col in out.columns
-        if str(col).startswith("Unnamed") or col in ("Einzelbetrag", "Saldo")
+        if str(col).startswith("Unnamed") or col in ("Einzelbetrag",)
     ]
     return out.drop(columns=[col for col in drop_cols if col in out.columns])
 
 
 def _normalize_amount_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    for col in ["Belastung", "Gutschrift"]:
+    for col in ["Belastung", "Gutschrift", "Saldo"]:
         if col in out.columns:
             out[col] = (
                 out[col]

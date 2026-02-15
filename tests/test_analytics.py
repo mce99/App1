@@ -2,6 +2,8 @@ import pandas as pd
 
 from analytics import (
     apply_category_overrides,
+    balance_timeline,
+    benchmark_assessment,
     build_report_pack,
     calculate_kpis,
     category_breakdown,
@@ -10,9 +12,12 @@ from analytics import (
     enrich_transaction_intelligence,
     forecast_cashflow,
     hourly_spending_profile,
+    monthly_salary_estimate,
+    merchant_insights,
     possible_duplicate_candidates,
     quality_indicators,
     recurring_transaction_candidates,
+    spending_recommendations,
     spending_velocity,
     weekday_average_cashflow,
 )
@@ -166,3 +171,43 @@ def test_detect_anomalies_and_duplicate_candidates() -> None:
     dupes = possible_duplicate_candidates(df)
     assert not anomalies.empty
     assert not dupes.empty
+
+
+def test_salary_benchmarks_and_recommendations_pipeline() -> None:
+    df = pd.DataFrame(
+        [
+            {"Date": "2026-01-30", "Time": "09:00:00", "DebitCHF": 0.0, "CreditCHF": 6000.0, "Category": "Income & Transfers", "Merchant": "Employer AG"},
+            {"Date": "2026-02-28", "Time": "09:00:00", "DebitCHF": 0.0, "CreditCHF": 6100.0, "Category": "Income & Transfers", "Merchant": "Employer AG"},
+            {"Date": "2026-01-15", "Time": "18:00:00", "DebitCHF": 900.0, "CreditCHF": 0.0, "Category": "Food & Drink", "Merchant": "COOP"},
+            {"Date": "2026-02-16", "Time": "18:00:00", "DebitCHF": 980.0, "CreditCHF": 0.0, "Category": "Food & Drink", "Merchant": "COOP"},
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["SourceAccount"] = "CH1"
+    df["IsTransfer"] = False
+    df["MerchantNormalized"] = df["Merchant"].str.upper()
+
+    salary = monthly_salary_estimate(df)
+    benchmarks = benchmark_assessment(df, float(salary["avg_monthly_salary"]))
+    recos = spending_recommendations(df, benchmarks)
+
+    assert salary["avg_monthly_salary"] > 0
+    assert not benchmarks.empty
+    assert not recos.empty
+
+
+def test_balance_timeline_and_merchant_insights() -> None:
+    df = pd.DataFrame(
+        [
+            {"Date": "2026-01-01", "Time": "10:00:00", "Saldo": 1000, "SourceAccount": "A", "Merchant": "Store", "DebitCHF": 10, "CreditCHF": 0},
+            {"Date": "2026-01-02", "Time": "10:00:00", "Saldo": 950, "SourceAccount": "A", "Merchant": "Store", "DebitCHF": 50, "CreditCHF": 0},
+            {"Date": "2026-01-02", "Time": "11:00:00", "Saldo": 5000, "SourceAccount": "B", "Merchant": "Employer", "DebitCHF": 0, "CreditCHF": 2000},
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["MerchantNormalized"] = df["Merchant"].str.upper()
+
+    timeline = balance_timeline(df)
+    merchants = merchant_insights(df, top_n=5)
+    assert not timeline.empty
+    assert not merchants.empty

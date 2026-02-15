@@ -594,3 +594,248 @@ def build_report_pack(df: pd.DataFrame, kpis: dict[str, float], monthly: pd.Data
         zf.writestr("monthly.csv", monthly.to_csv())
         zf.writestr("kpis.json", json.dumps(kpis, indent=2))
     return markdown, output.getvalue()
+
+
+def _spend_bucket(row: pd.Series) -> str:
+    category = str(row.get("Category", "")).strip()
+    merchant = str(
+        row.get("MerchantNormalized", row.get("Merchant", ""))
+    ).upper()
+    if category == "Transfers":
+        return "Transfers"
+    if category == "Food & Drink":
+        grocery_keys = ["COOP", "MIGROS", "SPAR", "PRONTO", "AGROLA", "SUPERMARKT", "GROCERY"]
+        if any(key in merchant for key in grocery_keys):
+            return "Groceries"
+        return "Dining"
+    if category == "Transport":
+        return "Transport"
+    if category == "Utilities & Bills":
+        return "Bills"
+    if category == "Shopping & Retail":
+        return "Shopping"
+    if category == "Entertainment & Leisure":
+        sub_keys = ["NETFLIX", "SPOTIFY", "APPLE", "UBER ONE", "GYM", "SUBSCRIPTION"]
+        if any(key in merchant for key in sub_keys):
+            return "Subscriptions"
+        return "Leisure"
+    return "Other"
+
+
+def monthly_salary_estimate(df: pd.DataFrame) -> dict[str, object]:
+    """Estimate monthly salary from recurring incoming transactions."""
+    work = df.copy()
+    work["Month"] = work["Date"].dt.to_period("M").astype(str)
+    if "MerchantNormalized" not in work.columns:
+        work["MerchantNormalized"] = work.get("Merchant", "").astype(str).str.upper()
+
+    incoming = work[(work["CreditCHF"] > 0) & (~work.get("IsTransfer", False))]
+    if incoming.empty:
+        return {"avg_monthly_salary": 0.0, "salary_monthly": pd.DataFrame(), "salary_sources": pd.DataFrame()}
+
+    monthly_by_merchant = (
+        incoming.groupby(["Month", "MerchantNormalized"], dropna=True)["CreditCHF"]
+        .sum()
+        .reset_index()
+    )
+    merchant_stats = monthly_by_merchant.groupby("MerchantNormalized")["CreditCHF"].agg(
+        Months="count", AvgMonthly="mean", MedianMonthly="median", MaxMonthly="max"
+    )
+    candidates = merchant_stats[(merchant_stats["Months"] >= 2) & (merchant_stats["MedianMonthly"] >= 1000)]
+    if candidates.empty:
+        candidates = merchant_stats.sort_values("AvgMonthly", ascending=False).head(1)
+
+    candidate_merchants = set(candidates.index.tolist())
+    salary_monthly = (
+        monthly_by_merchant[monthly_by_merchant["MerchantNormalized"].isin(candidate_merchants)]
+        .groupby("Month")["CreditCHF"]
+        .sum()
+        .reset_index(name="EstimatedSalaryCHF")
+    )
+    if salary_monthly.empty:
+        salary_monthly = (
+            incoming.groupby("Month")["CreditCHF"].sum().reset_index(name="EstimatedSalaryCHF")
+        )
+    salary_monthly = salary_monthly.sort_values("Month")
+    avg_salary = float(salary_monthly["EstimatedSalaryCHF"].tail(6).mean())
+
+    sources = candidates.sort_values("AvgMonthly", ascending=False).reset_index().rename(
+        columns={"MerchantNormalized": "SalarySource"}
+    )
+    return {
+        "avg_monthly_salary": avg_salary,
+        "salary_monthly": salary_monthly,
+        "salary_sources": sources,
+    }
+
+
+def benchmark_assessment(
+    df: pd.DataFrame, avg_monthly_salary: float, benchmark_cfg: dict[str, float] | None = None
+) -> pd.DataFrame:
+    """Compare spending behavior to common budgeting heuristics."""
+    if benchmark_cfg is None:
+        benchmark_cfg = {
+            "NeedsMaxPct": 50.0,
+            "WantsMaxPct": 30.0,
+            "SavingsMinPct": 20.0,
+            "GroceriesMaxPct": 10.0,
+            "DiningMaxPct": 8.0,
+            "SubscriptionsMaxPct": 5.0,
+            "TransportMaxPct": 15.0,
+        }
+
+    work = df.copy()
+    work["Month"] = work["Date"].dt.to_period("M").astype(str)
+    work["SpendBucket"] = work.apply(_spend_bucket, axis=1)
+
+    monthly = work.groupby("Month").agg(
+        Spending=("DebitCHF", "sum"),
+        Earnings=("CreditCHF", "sum"),
+    )
+    monthly["Net"] = monthly["Earnings"] - monthly["Spending"]
+    avg_monthly_earnings = float(monthly["Earnings"].mean()) if not monthly.empty else 0.0
+    income_base = float(avg_monthly_salary or avg_monthly_earnings or 0.0)
+
+    spend = work[work["DebitCHF"] > 0]
+    bucket_avg = (
+        spend.groupby(["Month", "SpendBucket"])["DebitCHF"].sum().groupby("SpendBucket").mean()
+        if not spend.empty
+        else pd.Series(dtype=float)
+    )
+
+    needs = float(sum(bucket_avg.get(k, 0.0) for k in ["Groceries", "Bills", "Transport"]))
+    wants = float(sum(bucket_avg.get(k, 0.0) for k in ["Dining", "Leisure", "Shopping", "Subscriptions"]))
+    groceries = float(bucket_avg.get("Groceries", 0.0))
+    dining = float(bucket_avg.get("Dining", 0.0))
+    subscriptions = float(bucket_avg.get("Subscriptions", 0.0))
+    transport = float(bucket_avg.get("Transport", 0.0))
+    savings_pct = float((monthly["Net"].mean() / income_base * 100.0) if income_base and not monthly.empty else 0.0)
+
+    def _pct(value: float) -> float:
+        return (value / income_base * 100.0) if income_base else 0.0
+
+    checks = [
+        ("Needs", needs, benchmark_cfg["NeedsMaxPct"], "max"),
+        ("Wants", wants, benchmark_cfg["WantsMaxPct"], "max"),
+        ("Savings", savings_pct, benchmark_cfg["SavingsMinPct"], "min"),
+        ("Groceries", groceries, benchmark_cfg["GroceriesMaxPct"], "max"),
+        ("Dining", dining, benchmark_cfg["DiningMaxPct"], "max"),
+        ("Subscriptions", subscriptions, benchmark_cfg["SubscriptionsMaxPct"], "max"),
+        ("Transport", transport, benchmark_cfg["TransportMaxPct"], "max"),
+    ]
+
+    rows = []
+    for metric, actual_value, target_pct, mode in checks:
+        actual_pct = actual_value if metric == "Savings" else _pct(actual_value)
+        if mode == "max":
+            gap = actual_pct - target_pct
+            status = "Over" if gap > 0 else "Within"
+        else:
+            gap = target_pct - actual_pct
+            status = "Low" if gap > 0 else "On Track"
+        rows.append(
+            {
+                "Metric": metric,
+                "ActualPctIncome": round(actual_pct, 2),
+                "TargetPctIncome": round(target_pct, 2),
+                "GapPct": round(gap, 2),
+                "Status": status,
+                "MonthlyActualCHF": round(actual_value if metric != "Savings" else 0.0, 2),
+                "MonthlyTargetCHF": round((target_pct / 100.0) * income_base, 2) if income_base else 0.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def merchant_insights(df: pd.DataFrame, top_n: int = 20) -> pd.DataFrame:
+    """Merchant-level behavior analytics."""
+    work = df.copy()
+    if "MerchantNormalized" not in work.columns:
+        work["MerchantNormalized"] = work.get("Merchant", "").astype(str).str.upper()
+    grouped = (
+        work.groupby("MerchantNormalized")
+        .agg(
+            Transactions=("MerchantNormalized", "size"),
+            SpendingCHF=("DebitCHF", "sum"),
+            EarningsCHF=("CreditCHF", "sum"),
+            AvgTicketCHF=("DebitCHF", "mean"),
+            LastSeen=("Date", "max"),
+        )
+        .sort_values("SpendingCHF", ascending=False)
+        .head(top_n)
+    )
+    grouped["NetCHF"] = grouped["EarningsCHF"] - grouped["SpendingCHF"]
+    return grouped.reset_index().rename(columns={"MerchantNormalized": "Merchant"})
+
+
+def spending_recommendations(df: pd.DataFrame, benchmark_table: pd.DataFrame) -> pd.DataFrame:
+    """Actionable recommendations to reduce spending."""
+    recommendations: list[dict[str, object]] = []
+    spending_total = float(df["DebitCHF"].sum())
+
+    for _, row in benchmark_table.iterrows():
+        metric = str(row["Metric"])
+        status = str(row["Status"])
+        if metric in {"Savings"} and status == "Low":
+            recommendations.append(
+                {
+                    "Priority": 1,
+                    "Area": "Savings",
+                    "Issue": f"Savings rate below target by {row['GapPct']:.1f}%",
+                    "Suggestion": "Cap discretionary categories first and automate a fixed monthly transfer to savings.",
+                }
+            )
+        elif status == "Over":
+            recommendations.append(
+                {
+                    "Priority": 2,
+                    "Area": metric,
+                    "Issue": f"{metric} is {row['GapPct']:.1f}% above target.",
+                    "Suggestion": f"Reduce {metric.lower()} budget by about CHF {max(row['MonthlyActualCHF'] - row['MonthlyTargetCHF'], 0):,.0f}/month.",
+                }
+            )
+
+    merchant_table = merchant_insights(df, top_n=5)
+    if not merchant_table.empty and spending_total > 0:
+        for _, m in merchant_table.iterrows():
+            share = float(m["SpendingCHF"]) / spending_total * 100.0
+            if share >= 12:
+                recommendations.append(
+                    {
+                        "Priority": 3,
+                        "Area": "Merchant concentration",
+                        "Issue": f"{m['Merchant']} accounts for {share:.1f}% of total spending.",
+                        "Suggestion": "Set merchant-specific monthly cap and seek alternatives or bulk optimization.",
+                    }
+                )
+
+    if not recommendations:
+        recommendations.append(
+            {
+                "Priority": 5,
+                "Area": "General",
+                "Issue": "No major overspend flags detected.",
+                "Suggestion": "Maintain current plan and focus on savings automation and periodic review.",
+            }
+        )
+
+    return pd.DataFrame(recommendations).sort_values("Priority").reset_index(drop=True)
+
+
+def balance_timeline(df: pd.DataFrame) -> pd.DataFrame:
+    """Account balance trend if statement includes Saldo values."""
+    if "Saldo" not in df.columns:
+        return pd.DataFrame()
+    work = df.copy()
+    work["Saldo"] = pd.to_numeric(work["Saldo"], errors="coerce")
+    work = work[work["Saldo"].notna()]
+    if work.empty:
+        return pd.DataFrame()
+    grouped = (
+        work.sort_values(["Date", "Time"])
+        .groupby(["Date", "SourceAccount"])["Saldo"]
+        .last()
+        .unstack(fill_value=pd.NA)
+        .sort_index()
+    )
+    return grouped

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pydeck as pdk
 import streamlit as st
 
 from metric_guide import METRIC_GUIDE
@@ -348,3 +349,84 @@ def render_portfolio(
         st.info("No holdings data to chart.")
     else:
         st.bar_chart(holdings.set_index("Label")[["Value"]])
+
+
+def render_insights(
+    salary_info: dict[str, object],
+    benchmark_table: pd.DataFrame,
+    recommendations: pd.DataFrame,
+    merchant_table: pd.DataFrame,
+    balance_table: pd.DataFrame,
+) -> None:
+    st.header("Insights & Optimization")
+    st.caption("Understand behavior, compare against benchmarks, and identify concrete spend reductions.")
+
+    avg_salary = float(salary_info.get("avg_monthly_salary", 0.0) or 0.0)
+    st.metric("Estimated avg monthly salary", f"{avg_salary:,.2f}")
+
+    salary_monthly = salary_info.get("salary_monthly", pd.DataFrame())
+    salary_sources = salary_info.get("salary_sources", pd.DataFrame())
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("### Salary trend")
+        if isinstance(salary_monthly, pd.DataFrame) and not salary_monthly.empty:
+            st.line_chart(salary_monthly.set_index("Month")[["EstimatedSalaryCHF"]])
+        else:
+            st.info("No recurring salary pattern confidently detected yet.")
+    with right:
+        st.markdown("### Salary sources")
+        if isinstance(salary_sources, pd.DataFrame) and not salary_sources.empty:
+            st.dataframe(salary_sources, use_container_width=True)
+        else:
+            st.info("No stable salary source identified.")
+
+    st.markdown("### Benchmark comparison")
+    st.dataframe(benchmark_table, use_container_width=True)
+
+    st.markdown("### Spend reduction recommendations")
+    st.dataframe(recommendations, use_container_width=True)
+
+    lower_left, lower_right = st.columns(2)
+    with lower_left:
+        st.markdown("### Merchant insights")
+        st.dataframe(merchant_table, use_container_width=True)
+    with lower_right:
+        st.markdown("### Balance trend")
+        if not balance_table.empty:
+            st.line_chart(balance_table)
+        else:
+            st.info("No running balance data available from the current files.")
+
+
+def render_spending_map(map_points: pd.DataFrame) -> None:
+    st.header("Spending Map (Switzerland)")
+    st.caption("Geographic concentration of spending based on transaction location text.")
+
+    if map_points.empty:
+        st.info("No geocoded spending points available for current filters.")
+        return
+
+    st.dataframe(map_points, use_container_width=True)
+
+    center_lat = float(map_points["lat"].mean())
+    center_lon = float(map_points["lon"].mean())
+    view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=7, pitch=35)
+
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=map_points,
+        get_position="[lon, lat]",
+        get_radius="SpendingCHF * 8",
+        radius_min_pixels=4,
+        radius_max_pixels=60,
+        get_fill_color="[20, 120, 255, 170]",
+        pickable=True,
+    )
+    deck = pdk.Deck(
+        layers=[layer],
+        initial_view_state=view_state,
+        tooltip={"text": "{Location}\nSpending CHF: {SpendingCHF}\nTransactions: {Transactions}"},
+        map_style=None,
+    )
+    st.pydeck_chart(deck, use_container_width=True)
