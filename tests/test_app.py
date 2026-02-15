@@ -382,11 +382,65 @@ def test_assign_categories_uses_web_researched_merchant_hints() -> None:
     )
 
     out = assign_categories(df, DEFAULT_KEYWORD_MAP)
-    assert out.loc[0, "Category"] == "Transport"
-    assert out.loc[1, "Category"] == "Shopping & Retail"
-    assert out.loc[2, "Category"] == "Food & Drink"
+    assert out.loc[0, "Category"] == "Gas Stations"
+    assert out.loc[1, "Category"] == "Shopping (General)"
+    assert out.loc[2, "Category"] == "Restaurants & Cafes"
     assert out.loc[3, "Category"] == "Income & Transfers"
     assert out.loc[4, "Category"] == "Transfers"
+
+
+def test_assign_categories_differentiates_restaurants_grocery_gas_shopping_and_clothing() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "Beschreibung1": "Confiserie Honold AG",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 15.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "COOP City Zurich",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 40.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "SOCAR Tankstelle",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 80.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "Digitec Galaxus",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 120.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "ZARA Zurich",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 90.0,
+                "Credit": 0.0,
+            },
+        ]
+    )
+
+    out = assign_categories(df, DEFAULT_KEYWORD_MAP)
+    assert out.loc[0, "Category"] == "Restaurants & Cafes"
+    assert out.loc[1, "Category"] == "Groceries"
+    assert out.loc[2, "Category"] == "Gas Stations"
+    assert out.loc[3, "Category"] == "Shopping (General)"
+    assert out.loc[4, "Category"] == "Clothing Brands"
 
 
 def test_assign_categories_handles_travel_and_avoids_short_keyword_false_positives() -> None:

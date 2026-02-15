@@ -1250,11 +1250,19 @@ def build_report_pack(
 
 def _spend_bucket(row: pd.Series) -> str:
     category = str(row.get("Category", "")).strip()
-    merchant = str(
-        row.get("MerchantNormalized", row.get("Merchant", ""))
-    ).upper()
+    merchant = str(row.get("MerchantNormalized", row.get("Merchant", ""))).upper()
     if category == "Transfers":
         return "Transfers"
+    if category == "Groceries":
+        return "Groceries"
+    if category == "Restaurants & Cafes":
+        return "Dining"
+    if category == "Gas Stations":
+        return "Transport"
+    if category == "Clothing Brands":
+        return "Shopping"
+    if category == "Shopping (General)":
+        return "Shopping"
     if category == "Food & Drink":
         grocery_keys = ["COOP", "MIGROS", "SPAR", "PRONTO", "AGROLA", "SUPERMARKT", "GROCERY"]
         if any(key in merchant for key in grocery_keys):
