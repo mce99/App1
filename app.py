@@ -25,8 +25,10 @@ from analytics import (
     enrich_transaction_intelligence,
     filter_by_date_range,
     forecast_cashflow,
+    generate_agent_action_plan,
     goals_progress,
     hourly_spending_profile,
+    ingestion_quality_by_source,
     income_source_summary,
     merchant_insights,
     monthly_salary_estimate,
@@ -42,6 +44,7 @@ from analytics import (
 )
 from categorization import DEFAULT_KEYWORD_MAP, assign_categories_with_confidence
 from dashboard_views import (
+    render_agent_console,
     render_accounts,
     render_anomalies,
     render_behavior,
@@ -500,6 +503,7 @@ def main() -> None:
     page = st.sidebar.radio(
         "Navigate",
         [
+            "Agent Console",
             "Home",
             "Portfolio",
             "Insights & Optimization",
@@ -552,6 +556,7 @@ def main() -> None:
     anomalies = detect_anomalies(filtered)
     dupes = possible_duplicate_candidates(filtered)
     quality = quality_indicators(filtered)
+    ingestion_quality = ingestion_quality_by_source(enriched)
     health_table = data_health_report(filtered)
     accounts = account_summary(filtered)
     balance_table = balance_timeline(filtered)
@@ -611,6 +616,14 @@ def main() -> None:
         benchmark_cfg=benchmark_cfg,
     )
     recommendations = spending_recommendations(filtered, benchmark_table)
+    action_plan = generate_agent_action_plan(
+        kpis=kpis,
+        quality=quality,
+        benchmark_table=benchmark_table,
+        anomalies=anomalies,
+        dupes=dupes,
+        recurring=recurring,
+    )
 
     with st.sidebar.expander("Map settings", expanded=False):
         min_spending_for_map = st.slider("Min spending per point (CHF)", 0.0, 500.0, 20.0, key="map_min_spending")
@@ -623,7 +636,9 @@ def main() -> None:
 
     summary_md, report_zip = build_report_pack(filtered, kpis, monthly)
 
-    if page == "Home":
+    if page == "Agent Console":
+        render_agent_console(action_plan, ingestion_quality)
+    elif page == "Home":
         render_home(kpis, daily, monthly, category_table, quality)
     elif page == "Insights & Optimization":
         render_insights(salary_info, benchmark_table, recommendations, merchant_table, balance_table)

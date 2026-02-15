@@ -6,6 +6,7 @@ import hashlib
 import io
 import zipfile
 from typing import Any
+from typing import Optional
 
 import pandas as pd
 
@@ -176,6 +177,8 @@ def _parse_datetime_value(value: Any):
 
 
 def _parse_datetime_series(values: pd.Series) -> pd.Series:
+    if values is None:
+        return pd.Series(dtype="datetime64[ns]")
     parsed = pd.to_datetime(values, errors="coerce")
     missing = parsed.isna()
     if missing.any():
@@ -318,12 +321,36 @@ def _load_raw_statement(uploaded_file: Any) -> tuple[pd.DataFrame, dict[str, Any
     raise ValueError(f"Unsupported file type: {name or '<unknown>'}. Supported: csv, xlsx, xls.")
 
 
-def _build_sort_datetime(date_series: pd.Series, time_series: pd.Series) -> pd.Series:
+def _build_sort_datetime(
+    date_series: pd.Series,
+    time_series: pd.Series,
+    booking_series: Optional[pd.Series] = None,
+    value_series: Optional[pd.Series] = None,
+) -> pd.Series:
     date_part = date_series.dt.strftime("%Y-%m-%d").fillna("")
     time_part = (
         time_series.fillna("").astype(str).str.strip().str.split(".").str[0].replace("nan", "")
     )
-    return pd.to_datetime((date_part + " " + time_part).str.strip(), errors="coerce")
+    parsed = pd.to_datetime((date_part + " " + time_part).str.strip(), errors="coerce")
+    has_explicit_time = time_part.str.match(r"^\d{1,2}:\d{2}(:\d{2})?$", na=False)
+    parsed.loc[~has_explicit_time] = pd.NaT
+
+    # UBS exports often have empty Abschlusszeit; keep deterministic chronology by
+    # falling back to booking/value date at noon instead of leaving NaT.
+    if booking_series is not None:
+        booking_fallback = pd.to_datetime(booking_series, errors="coerce")
+        missing = parsed.isna() & booking_fallback.notna()
+        parsed.loc[missing] = booking_fallback.loc[missing] + pd.Timedelta(hours=12)
+
+    if value_series is not None:
+        value_fallback = pd.to_datetime(value_series, errors="coerce")
+        missing = parsed.isna() & value_fallback.notna()
+        parsed.loc[missing] = value_fallback.loc[missing] + pd.Timedelta(hours=12)
+
+    date_fallback = pd.to_datetime(date_series, errors="coerce")
+    missing = parsed.isna() & date_fallback.notna()
+    parsed.loc[missing] = date_fallback.loc[missing] + pd.Timedelta(hours=12)
+    return parsed
 
 
 def _drop_statement_noise(df: pd.DataFrame) -> pd.DataFrame:
@@ -392,9 +419,14 @@ def load_transactions(uploaded_file: Any) -> pd.DataFrame:
     df["Merchant"] = df.get("Beschreibung1", "").astype(str).str.strip()
     df["Location"] = df.get("Beschreibung3", "").fillna(df.get("Beschreibung2", "")).astype(str)
     df["Date"] = _parse_datetime_series(df.get("Abschlussdatum"))
+    df["BookingDate"] = _parse_datetime_series(df.get("Buchungsdatum"))
+    df["ValueDate"] = _parse_datetime_series(df.get("Valutadatum"))
     df["Time"] = df.get("Abschlusszeit", "").fillna("").astype(str)
+    df["HasExplicitTime"] = df["Time"].astype(str).str.strip().ne("")
     df["TimeOfDay"] = df["Time"].apply(classify_time_of_day)
-    df["SortDateTime"] = _build_sort_datetime(df["Date"], df["Time"])
+    df["SortDateTime"] = _build_sort_datetime(
+        df["Date"], df["Time"], booking_series=df["BookingDate"], value_series=df["ValueDate"]
+    )
     df["SourceFile"] = getattr(uploaded_file, "name", "uploaded_file")
     for key, value in context.items():
         df[key] = value

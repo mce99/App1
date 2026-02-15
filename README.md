@@ -6,6 +6,7 @@ Now includes a modular finance workspace with:
 - transaction intelligence (forecasts, anomalies, recurring detection, transfer/account tracking)
 - stock positions (symbol, quantity, average buy price)
 - crypto wallet lookups for BTC / ETH / SOL addresses
+- Agent Console (auto-prioritized action queue + ingestion quality diagnostics)
 
 ## Run locally
 
@@ -17,6 +18,7 @@ python3 -m venv .venv
 
 CSV files are expected to be semicolon-delimited (`;`).
 You can also upload `.zip` bundles containing many CSV/XLS/XLSX statements.
+For UBS-style files with missing times, ordering now falls back to booking/value dates.
 
 ## Quality checks
 

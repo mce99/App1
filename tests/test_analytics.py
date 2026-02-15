@@ -11,7 +11,9 @@ from analytics import (
     detect_anomalies,
     enrich_transaction_intelligence,
     forecast_cashflow,
+    generate_agent_action_plan,
     hourly_spending_profile,
+    ingestion_quality_by_source,
     monthly_salary_estimate,
     merchant_insights,
     possible_duplicate_candidates,
@@ -211,3 +213,60 @@ def test_balance_timeline_and_merchant_insights() -> None:
     merchants = merchant_insights(df, top_n=5)
     assert not timeline.empty
     assert not merchants.empty
+
+
+def test_ingestion_quality_and_agent_plan() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "SourceFile": "a.csv",
+                "SourceAccount": "CH1",
+                "Date": "2026-01-01",
+                "Time": "",
+                "TimeOfDay": "Unknown",
+                "Category": "Other",
+                "TransactionId": "t1",
+                "StatementFrom": "2026-01-01",
+                "StatementTo": "2026-01-31",
+                "DebitCHF": 100.0,
+                "CreditCHF": 0.0,
+            },
+            {
+                "SourceFile": "a.csv",
+                "SourceAccount": "CH1",
+                "Date": "2026-01-02",
+                "Time": "10:00:00",
+                "TimeOfDay": "Morning",
+                "Category": "Food",
+                "TransactionId": "t1",
+                "StatementFrom": "2026-01-01",
+                "StatementTo": "2026-01-31",
+                "DebitCHF": 120.0,
+                "CreditCHF": 0.0,
+            },
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["StatementFrom"] = pd.to_datetime(df["StatementFrom"])
+    df["StatementTo"] = pd.to_datetime(df["StatementTo"])
+
+    ingestion = ingestion_quality_by_source(df)
+    assert not ingestion.empty
+    assert int(ingestion.loc[0, "DuplicateTransactionIds"]) == 2
+
+    benchmark_table = pd.DataFrame(
+        [
+            {"Metric": "Groceries", "Status": "Over", "GapPct": 2.5, "MonthlyActualCHF": 300.0, "MonthlyTargetCHF": 150.0},
+            {"Metric": "Savings", "Status": "Low", "GapPct": 6.0, "MonthlyActualCHF": 0.0, "MonthlyTargetCHF": 0.0},
+        ]
+    )
+    plan = generate_agent_action_plan(
+        kpis={"transactions": 200},
+        quality={"missing_time_pct": 10.0, "other_category_pct": 30.0},
+        benchmark_table=benchmark_table,
+        anomalies=pd.DataFrame([{"x": 1}]),
+        dupes=pd.DataFrame([{"x": 1}]),
+        recurring=pd.DataFrame(),
+    )
+    assert not plan.empty
+    assert int(plan["Priority"].min()) == 1

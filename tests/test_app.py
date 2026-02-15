@@ -150,6 +150,22 @@ def test_load_transactions_detects_header_and_context_with_metadata_rows() -> No
     assert "Kosten: 1.00" in out.loc[0, "Fussnoten"]
 
 
+def test_load_transactions_uses_booking_date_when_time_missing() -> None:
+    csv_content = "\n".join(
+        [
+            "Kontonummer:;0000000",
+            "Abschlussdatum;Abschlusszeit;Buchungsdatum;Valutadatum;Währung;Belastung;Gutschrift;Beschreibung1;Fussnoten",
+            "2026-02-12;;2026-02-13;2026-02-12;CHF;-10;0;NoTimeTx;",
+        ]
+    )
+    out = load_transactions(DummyUpload("missing_time.csv", csv_content))
+    assert len(out) == 1
+    assert str(out.loc[0, "BookingDate"]).startswith("2026-02-13")
+    assert not bool(out.loc[0, "HasExplicitTime"])
+    # Noon fallback is used when no explicit trade time is present.
+    assert str(out.loc[0, "SortDateTime"]).startswith("2026-02-13 12:00:00")
+
+
 def test_load_transactions_maps_english_ubs_headers() -> None:
     csv_content = "\n".join(
         [

@@ -430,3 +430,17 @@ def render_spending_map(map_points: pd.DataFrame) -> None:
         map_style=None,
     )
     st.pydeck_chart(deck, use_container_width=True)
+
+
+def render_agent_console(action_plan: pd.DataFrame, ingestion_quality: pd.DataFrame) -> None:
+    st.header("Agent Console")
+    st.caption("Automatic operations board for what to fix and optimize next.")
+
+    st.markdown("### Prioritized action queue")
+    st.dataframe(action_plan, use_container_width=True, hide_index=True)
+
+    st.markdown("### Upload and ingestion quality")
+    if ingestion_quality.empty:
+        st.info("No ingestion diagnostics available yet.")
+    else:
+        st.dataframe(ingestion_quality, use_container_width=True, hide_index=True)

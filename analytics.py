@@ -310,6 +310,148 @@ def quality_indicators(df: pd.DataFrame) -> dict[str, float]:
     }
 
 
+def ingestion_quality_by_source(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-source ingestion diagnostics for upload QA."""
+    if df.empty:
+        return pd.DataFrame()
+
+    rows: list[dict[str, object]] = []
+    for source, group in df.groupby("SourceFile", dropna=False):
+        missing_time = float(group["Time"].fillna("").astype(str).str.strip().eq("").sum())
+        unknown_time = float(group["TimeOfDay"].fillna("").astype(str).str.strip().eq("Unknown").sum())
+        other_category = float(group["Category"].fillna("").astype(str).str.strip().eq("Other").sum())
+        duplicate_ids = 0.0
+        if "TransactionId" in group.columns:
+            duplicate_ids = float(group["TransactionId"].duplicated(keep=False).sum())
+
+        date_min = group["Date"].min()
+        date_max = group["Date"].max()
+        statement_from = group["StatementFrom"].iloc[0] if "StatementFrom" in group.columns else pd.NaT
+        statement_to = group["StatementTo"].iloc[0] if "StatementTo" in group.columns else pd.NaT
+
+        coverage_status = "N/A"
+        if pd.notna(statement_from) and pd.notna(statement_to) and pd.notna(date_min) and pd.notna(date_max):
+            if date_min < statement_from or date_max > statement_to:
+                coverage_status = "Outside statement period"
+            else:
+                coverage_status = "Within statement period"
+
+        rows.append(
+            {
+                "SourceFile": source,
+                "Rows": int(len(group)),
+                "DateFrom": date_min.date().isoformat() if pd.notna(date_min) else "",
+                "DateTo": date_max.date().isoformat() if pd.notna(date_max) else "",
+                "MissingTimePct": round((missing_time / len(group) * 100.0) if len(group) else 0.0, 1),
+                "UnknownTimePct": round((unknown_time / len(group) * 100.0) if len(group) else 0.0, 1),
+                "OtherCategoryPct": round((other_category / len(group) * 100.0) if len(group) else 0.0, 1),
+                "DuplicateTransactionIds": int(duplicate_ids),
+                "CoverageStatus": coverage_status,
+                "SourceAccount": str(group["SourceAccount"].iloc[0]) if "SourceAccount" in group.columns else "",
+            }
+        )
+
+    out = pd.DataFrame(rows)
+    return out.sort_values(["Rows", "MissingTimePct"], ascending=[False, False]).reset_index(drop=True)
+
+
+def generate_agent_action_plan(
+    kpis: dict[str, float],
+    quality: dict[str, float],
+    benchmark_table: pd.DataFrame,
+    anomalies: pd.DataFrame,
+    dupes: pd.DataFrame,
+    recurring: pd.DataFrame,
+) -> pd.DataFrame:
+    """Create prioritized, actionable tasks for an operator-style workflow."""
+    rows: list[dict[str, object]] = []
+
+    def add(priority: int, area: str, task: str, reason: str, destination: str) -> None:
+        rows.append(
+            {
+                "Priority": int(priority),
+                "Area": area,
+                "Task": task,
+                "Reason": reason,
+                "OpenPage": destination,
+            }
+        )
+
+    if quality.get("missing_time_pct", 0.0) >= 8:
+        add(
+            1,
+            "Data quality",
+            "Audit files with missing timestamps and normalize booking-time fallback.",
+            f"{quality['missing_time_pct']:.1f}% of rows miss explicit time.",
+            "Data Health",
+        )
+    if quality.get("other_category_pct", 0.0) >= 20:
+        add(
+            1,
+            "Categorization",
+            "Review uncategorized transactions and add keyword rules.",
+            f"{quality['other_category_pct']:.1f}% categorized as Other.",
+            "Review Queue",
+        )
+    if not anomalies.empty:
+        add(
+            2,
+            "Risk monitoring",
+            "Investigate anomaly outliers and mark expected exceptions.",
+            f"{len(anomalies)} anomaly candidate(s) detected.",
+            "Anomalies",
+        )
+    if not dupes.empty:
+        add(
+            2,
+            "Data integrity",
+            "Check duplicate candidates and keep one canonical transaction.",
+            f"{len(dupes)} duplicate candidate row(s) found.",
+            "Anomalies",
+        )
+    if recurring.empty and int(kpis.get("transactions", 0)) >= 120:
+        add(
+            3,
+            "Planning",
+            "Set recurring rules for known subscriptions and standing orders.",
+            "No stable recurring pattern detected despite high transaction count.",
+            "Plans & Recurring",
+        )
+
+    if not benchmark_table.empty:
+        over = benchmark_table[benchmark_table["Status"] == "Over"]
+        low = benchmark_table[(benchmark_table["Metric"] == "Savings") & (benchmark_table["Status"] == "Low")]
+        for _, row in over.head(3).iterrows():
+            add(
+                2,
+                "Cost optimization",
+                f"Reduce {row['Metric']} by about CHF {max(row['MonthlyActualCHF'] - row['MonthlyTargetCHF'], 0):,.0f}/month.",
+                f"{row['Metric']} is {row['GapPct']:.1f}% above configured target.",
+                "Insights & Optimization",
+            )
+        if not low.empty:
+            gap = float(low.iloc[0]["GapPct"])
+            add(
+                1,
+                "Savings",
+                "Increase monthly auto-transfer to savings and cut discretionary categories.",
+                f"Savings rate is {gap:.1f}% below target.",
+                "Insights & Optimization",
+            )
+
+    if not rows:
+        add(
+            5,
+            "Maintenance",
+            "No urgent actions. Keep monthly review cadence and refresh uploads.",
+            "Current dataset quality and spend metrics are within target bands.",
+            "Home",
+        )
+
+    out = pd.DataFrame(rows)
+    return out.sort_values(["Priority", "Area"]).reset_index(drop=True)
+
+
 _IBAN_PATTERN = re.compile(r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,8}\b")
 _ACCOUNT_PATTERN = re.compile(r"\b\d{4}\s\d{8}\.\d{2}\b")
 _TRANSFER_KEYWORDS = [
