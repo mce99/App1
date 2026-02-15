@@ -8,6 +8,7 @@ Now includes a modular finance workspace with:
 - crypto wallet lookups for BTC / ETH / SOL addresses
 - Agent Console (auto-prioritized action queue + ingestion quality diagnostics)
 - Category Lab for unlabeled transactions with merchant-rule learning
+- Mapping Studio page for manual mapping + smart token-rule learning
 - AI Coach (optional OpenAI API key, offline fallback if no key)
 
 ## Run locally
@@ -21,7 +22,7 @@ python3 -m venv .venv
 CSV files are expected to be semicolon-delimited (`;`).
 You can also upload `.zip` bundles containing many CSV/XLS/XLSX statements.
 For UBS-style files with missing times, ordering now falls back to booking/value dates.
-The app is organized into simple workspaces: Overview, Money In/Out, Plan & Improve, Data & QA, Portfolio, Guide.
+The app is organized into simple workspaces: Overview, Money In/Out, Plan & Improve, Mapping, Data & QA, Portfolio, Guide.
 
 ## Quality checks
 

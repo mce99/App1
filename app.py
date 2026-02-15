@@ -72,6 +72,14 @@ from market_data import (
     holdings_mix,
     portfolio_totals,
 )
+from mapping_rules import (
+    apply_pattern_rules,
+    learn_pattern_rules,
+    normalize_rule_map,
+    suggest_category_from_rules,
+    tokenize_mapping_text,
+    transaction_text,
+)
 from parsing import SUPPORTED_EXTENSIONS, classify_time_of_day, merge_transactions
 
 st.set_page_config(page_title="PulseLedger", page_icon="\U0001f4ca", layout="wide")
@@ -152,6 +160,8 @@ def _ensure_state_defaults() -> None:
         st.session_state["category_overrides"] = {}
     if "merchant_category_rules" not in st.session_state:
         st.session_state["merchant_category_rules"] = {}
+    if "pattern_category_rules" not in st.session_state:
+        st.session_state["pattern_category_rules"] = {}
     if "ai_brief_text" not in st.session_state:
         st.session_state["ai_brief_text"] = ""
     if "ai_brief_mode" not in st.session_state:
@@ -159,20 +169,24 @@ def _ensure_state_defaults() -> None:
 
 
 def _apply_merchant_category_rules(df: pd.DataFrame) -> pd.DataFrame:
-    rules = st.session_state.get("merchant_category_rules", {})
+    rules = normalize_rule_map(st.session_state.get("merchant_category_rules", {}))
     if not rules:
         return df
 
     out = df.copy()
     merchant_norm = out.get("MerchantNormalized", pd.Series([""] * len(out))).astype(str).str.upper().str.strip()
-    normalized_rules = {str(k).upper().strip(): str(v) for k, v in rules.items() if str(k).strip()}
-    mapped = merchant_norm.map(normalized_rules)
+    mapped = merchant_norm.map(rules)
     mask = mapped.notna()
     if mask.any():
         out.loc[mask, "Category"] = mapped.loc[mask]
         out.loc[mask, "CategoryConfidence"] = 0.99
         out.loc[mask, "CategoryRule"] = "MerchantRule"
     return out
+
+
+def _apply_pattern_category_rules(df: pd.DataFrame) -> pd.DataFrame:
+    rules = normalize_rule_map(st.session_state.get("pattern_category_rules", {}))
+    return apply_pattern_rules(df, rules, low_confidence_threshold=0.75)
 
 
 def _add_manual_transaction(df: pd.DataFrame) -> pd.DataFrame:
@@ -339,6 +353,7 @@ def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None, 
     enriched = assign_categories_with_confidence(enriched, keyword_map)
     enriched = enrich_transaction_intelligence(enriched)
     enriched = _apply_merchant_category_rules(enriched)
+    enriched = _apply_pattern_category_rules(enriched)
 
     # Force transfer category where confidence is high.
     enriched.loc[(enriched["IsTransfer"]) & (enriched["TransferConfidence"] >= 0.7), "Category"] = "Transfers"
@@ -542,6 +557,197 @@ def _render_category_lab(enriched: pd.DataFrame, category_options: list[str]) ->
             st.dataframe(pd.DataFrame(rule_items), use_container_width=True, hide_index=True)
 
 
+def _render_mapping_studio(enriched: pd.DataFrame, category_options: list[str]) -> None:
+    st.header("Mapping Studio")
+    st.caption("Map transactions to improve quality, then let the app learn those patterns.")
+
+    merchant_rules = normalize_rule_map(st.session_state.get("merchant_category_rules", {}))
+    pattern_rules = normalize_rule_map(st.session_state.get("pattern_category_rules", {}))
+    override_count = len(st.session_state.get("category_overrides", {}))
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Manual tx labels", f"{override_count:,}")
+    c2.metric("Merchant rules", f"{len(merchant_rules):,}")
+    c3.metric("Pattern rules", f"{len(pattern_rules):,}")
+
+    st.markdown("### Learn rules from your labels")
+    l1, l2, l3 = st.columns(3)
+    min_examples = int(l1.number_input("Min examples per token", min_value=2, max_value=10, value=3, step=1))
+    min_precision = float(l2.slider("Min token precision", 0.5, 1.0, 0.8, 0.05))
+    include_high_conf = bool(l3.checkbox("Include high-confidence auto labels", value=False))
+
+    if st.button("Auto-learn pattern rules", key="learn_pattern_rules_btn"):
+        if "CategoryOverridden" in enriched.columns:
+            manual_mask = enriched["CategoryOverridden"].fillna(False)
+        else:
+            manual_mask = pd.Series(False, index=enriched.index)
+        train = enriched[manual_mask].copy()
+        if include_high_conf:
+            high_conf = enriched[
+                (enriched["Category"].fillna("Other") != "Other")
+                & (enriched["CategoryConfidence"].fillna(0.0) >= 0.9)
+            ].copy()
+            train = pd.concat([train, high_conf], ignore_index=True).drop_duplicates(subset=["TransactionId"], keep="first")
+
+        learned = learn_pattern_rules(train, min_examples=min_examples, min_precision=min_precision)
+        if learned.empty:
+            st.info("No robust pattern rules found yet. Label more rows first.")
+        else:
+            for _, row in learned.iterrows():
+                st.session_state["pattern_category_rules"][str(row["Token"]).upper().strip()] = str(row["Category"])
+            st.success(f"Learned or refreshed {len(learned)} pattern rule(s).")
+            st.rerun()
+
+    rule_left, rule_right = st.columns(2)
+    with rule_left:
+        st.markdown("### Merchant rules")
+        merchant_rows = [
+            {"MerchantNormalized": key, "Category": value}
+            for key, value in sorted(merchant_rules.items())
+        ]
+        if merchant_rows:
+            st.dataframe(pd.DataFrame(merchant_rows), use_container_width=True, hide_index=True, height=220)
+        else:
+            st.caption("No merchant rules.")
+        if st.button("Clear merchant rules", key="mapping_clear_merchant"):
+            st.session_state["merchant_category_rules"] = {}
+            st.rerun()
+
+    with rule_right:
+        st.markdown("### Pattern rules")
+        pattern_rows = [
+            {"Token": key, "Category": value}
+            for key, value in sorted(pattern_rules.items())
+        ]
+        if pattern_rows:
+            st.dataframe(pd.DataFrame(pattern_rows), use_container_width=True, hide_index=True, height=220)
+        else:
+            st.caption("No pattern rules.")
+        if st.button("Clear pattern rules", key="mapping_clear_pattern"):
+            st.session_state["pattern_category_rules"] = {}
+            st.rerun()
+
+    st.markdown("### Map candidate transactions")
+    queue_mode = st.selectbox(
+        "Candidate scope",
+        ["Other only", "Other + low confidence", "All filtered"],
+        index=1,
+    )
+    low_conf_cutoff = st.slider("Low-confidence cutoff", 0.3, 0.95, 0.7, 0.05, key="mapping_low_conf_cutoff")
+    max_rows = int(st.number_input("Max rows to edit", min_value=50, max_value=2000, value=400, step=50))
+
+    candidates = enriched.copy()
+    if queue_mode == "Other only":
+        candidates = candidates[candidates["Category"].fillna("Other") == "Other"]
+    elif queue_mode == "Other + low confidence":
+        candidates = candidates[
+            (candidates["Category"].fillna("Other") == "Other")
+            | (candidates["CategoryConfidence"].fillna(0.0) < low_conf_cutoff)
+        ]
+
+    candidates = candidates.sort_values(["Date", "Time"], ascending=[False, False]).head(max_rows).copy()
+    if candidates.empty:
+        st.success("No candidates for mapping in this view.")
+        return
+
+    hist_source = enriched[
+        (enriched["Category"].fillna("Other") != "Other")
+        & (enriched["CategoryConfidence"].fillna(0.0) >= 0.85)
+    ]
+    history_map = (
+        hist_source.groupby("MerchantNormalized")["Category"]
+        .agg(lambda s: s.value_counts().index[0])
+        .to_dict()
+    )
+
+    def _mapping_suggestion(row: pd.Series) -> tuple[str, str, str]:
+        merchant_key = str(row.get("MerchantNormalized", "")).upper().strip()
+        if merchant_key in merchant_rules:
+            return merchant_rules[merchant_key], "MerchantRule", ""
+
+        suggested, token, _score = suggest_category_from_rules(transaction_text(row), pattern_rules)
+        if suggested:
+            return suggested, f"PatternRule:{token}", token
+
+        if merchant_key in history_map:
+            return str(history_map[merchant_key]), "MerchantHistory", ""
+
+        if bool(row.get("IsTransfer", False)) and float(row.get("TransferConfidence", 0.0) or 0.0) >= 0.7:
+            return "Transfers", "TransferSignal", ""
+
+        return "Other", "Unmapped", ""
+
+    suggested = candidates.apply(_mapping_suggestion, axis=1, result_type="expand")
+    suggested.columns = ["SuggestedCategory", "SuggestionSource", "SuggestedToken"]
+    candidates[suggested.columns] = suggested
+    candidates["FinalCategory"] = candidates["SuggestedCategory"]
+    candidates["LearnMerchantRule"] = False
+    candidates["LearnPatternRule"] = False
+    candidates["PatternToken"] = candidates["SuggestedToken"]
+
+    editable_cols = [
+        "TransactionId",
+        "Date",
+        "Time",
+        "Merchant",
+        "MerchantNormalized",
+        "DebitCHF",
+        "CreditCHF",
+        "Category",
+        "CategoryConfidence",
+        "SuggestedCategory",
+        "SuggestionSource",
+        "FinalCategory",
+        "LearnMerchantRule",
+        "LearnPatternRule",
+        "PatternToken",
+    ]
+    editor = st.data_editor(
+        candidates[editable_cols],
+        hide_index=True,
+        use_container_width=True,
+        key="mapping_studio_editor",
+        column_config={
+            "FinalCategory": st.column_config.SelectboxColumn(
+                "Final category", options=sorted(set(category_options + ["Other", "Transfers"]))
+            ),
+            "LearnMerchantRule": st.column_config.CheckboxColumn("Learn merchant"),
+            "LearnPatternRule": st.column_config.CheckboxColumn("Learn token"),
+            "PatternToken": st.column_config.TextColumn("Pattern token"),
+        },
+    )
+
+    if st.button("Apply mappings", key="mapping_studio_apply"):
+        changed = editor[editor["FinalCategory"] != editor["Category"]]
+        merchant_learn = editor[(editor["LearnMerchantRule"]) & (editor["FinalCategory"].fillna("") != "")]
+        token_learn = editor[(editor["LearnPatternRule"]) & (editor["FinalCategory"].fillna("") != "")]
+
+        for _, row in changed.iterrows():
+            st.session_state["category_overrides"][str(row["TransactionId"])] = str(row["FinalCategory"])
+
+        merchant_count = 0
+        for _, row in merchant_learn.iterrows():
+            merchant_key = str(row.get("MerchantNormalized", "")).upper().strip()
+            if merchant_key:
+                st.session_state["merchant_category_rules"][merchant_key] = str(row["FinalCategory"])
+                merchant_count += 1
+
+        pattern_count = 0
+        for _, row in token_learn.iterrows():
+            token_text = str(row.get("PatternToken", "")).upper().strip()
+            if not token_text:
+                tokens = tokenize_mapping_text(transaction_text(row))
+                token_text = tokens[0] if tokens else ""
+            if token_text:
+                st.session_state["pattern_category_rules"][token_text] = str(row["FinalCategory"])
+                pattern_count += 1
+
+        st.success(
+            f"Applied {len(changed)} transaction labels, learned {merchant_count} merchant rules, and {pattern_count} pattern rules."
+        )
+        st.rerun()
+
+
 def _render_ai_coach(
     kpis: dict[str, float],
     benchmark_table: pd.DataFrame,
@@ -693,6 +899,7 @@ def main() -> None:
             "Overview",
             "Money In/Out",
             "Plan & Improve",
+            "Mapping",
             "Data & QA",
             "Portfolio",
             "Guide",
@@ -713,6 +920,10 @@ def main() -> None:
     filtered = _apply_filters(enriched)
     if filtered.empty:
         st.warning("No transactions match your current filters.")
+        return
+
+    if page == "Mapping":
+        _render_mapping_studio(filtered, lookup.get("categories", []))
         return
 
     # Shared analytics.
