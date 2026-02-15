@@ -239,3 +239,67 @@ def budget_progress(df: pd.DataFrame, budget_by_category: dict[str, float]) -> p
     out["RemainingCHF"] = out["BudgetCHF"] - out["ActualCHF"]
     out["Status"] = out["RemainingCHF"].apply(lambda v: "On Track" if v >= 0 else "Over Budget")
     return out.sort_values("ActualCHF", ascending=False)
+
+
+def category_breakdown(df: pd.DataFrame) -> pd.DataFrame:
+    """Return spending/earnings/net and share by category."""
+    out = (
+        df.groupby("Category", dropna=True)
+        .agg(
+            SpendingCHF=("DebitCHF", "sum"),
+            EarningsCHF=("CreditCHF", "sum"),
+            Transactions=("Category", "size"),
+        )
+        .sort_values("SpendingCHF", ascending=False)
+    )
+    out["NetCHF"] = out["EarningsCHF"] - out["SpendingCHF"]
+    total_spending = float(out["SpendingCHF"].sum())
+    total_earnings = float(out["EarningsCHF"].sum())
+    out["SpendingSharePct"] = (
+        out["SpendingCHF"].apply(lambda x: (x / total_spending * 100.0) if total_spending else 0.0)
+    )
+    out["EarningsSharePct"] = (
+        out["EarningsCHF"].apply(lambda x: (x / total_earnings * 100.0) if total_earnings else 0.0)
+    )
+    return out
+
+
+def income_source_summary(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
+    """Top merchants/sources by credited amount."""
+    grouped = (
+        df.groupby("Merchant", dropna=True)["CreditCHF"]
+        .sum()
+        .sort_values(ascending=False)
+        .head(top_n)
+        .reset_index(name="EarningsCHF")
+    )
+    grouped = grouped[grouped["Merchant"].astype(str).str.strip() != ""]
+    return grouped[grouped["EarningsCHF"] > 0]
+
+
+def spending_velocity(df: pd.DataFrame, window_days: int = 7) -> pd.DataFrame:
+    """Rolling spending/earning averages from daily totals."""
+    daily = daily_net_cashflow(df)
+    if daily.empty:
+        return pd.DataFrame(columns=["SpendingMA", "EarningsMA", "NetMA"])
+    out = daily.copy()
+    out["SpendingMA"] = out["Spending"].rolling(window=window_days, min_periods=1).mean()
+    out["EarningsMA"] = out["Earnings"].rolling(window=window_days, min_periods=1).mean()
+    out["NetMA"] = out["Net"].rolling(window=window_days, min_periods=1).mean()
+    return out[["SpendingMA", "EarningsMA", "NetMA"]]
+
+
+def quality_indicators(df: pd.DataFrame) -> dict[str, float]:
+    """Data quality indicators for the current filtered view."""
+    total = float(len(df))
+    missing_time = float(df["Time"].fillna("").astype(str).str.strip().eq("").sum())
+    unknown_category = float(df["Category"].fillna("").astype(str).str.strip().eq("Other").sum())
+    unknown_tod = float(df["TimeOfDay"].fillna("").astype(str).str.strip().eq("Unknown").sum())
+    missing_currency = float(df["Währung"].isna().sum()) if "Währung" in df.columns else 0.0
+    return {
+        "rows": total,
+        "missing_time_pct": (missing_time / total * 100.0) if total else 0.0,
+        "other_category_pct": (unknown_category / total * 100.0) if total else 0.0,
+        "unknown_timeofday_pct": (unknown_tod / total * 100.0) if total else 0.0,
+        "missing_currency_pct": (missing_currency / total * 100.0) if total else 0.0,
+    }

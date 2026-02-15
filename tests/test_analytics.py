@@ -1,6 +1,14 @@
 import pandas as pd
 
-from analytics import calculate_kpis, daily_net_cashflow, hourly_spending_profile, weekday_average_cashflow
+from analytics import (
+    calculate_kpis,
+    category_breakdown,
+    daily_net_cashflow,
+    hourly_spending_profile,
+    quality_indicators,
+    spending_velocity,
+    weekday_average_cashflow,
+)
 
 
 def _sample_df() -> pd.DataFrame:
@@ -53,3 +61,32 @@ def test_weekday_average_cashflow_returns_all_weekdays() -> None:
     assert len(out.index) == 7
     assert "Monday" in out.index
     assert "Sunday" in out.index
+
+
+def test_category_breakdown_computes_shares() -> None:
+    df = _sample_df()
+    df["Category"] = ["Food", "Food", "Salary", "Transport"]
+    out = category_breakdown(df)
+
+    assert "SpendingSharePct" in out.columns
+    assert "EarningsSharePct" in out.columns
+    assert round(float(out["SpendingCHF"].sum()), 2) == 60.0
+
+
+def test_spending_velocity_contains_rolling_columns() -> None:
+    out = spending_velocity(_sample_df(), window_days=2)
+    assert list(out.columns) == ["SpendingMA", "EarningsMA", "NetMA"]
+    assert len(out) == 2
+
+
+def test_quality_indicators_are_percentages() -> None:
+    df = _sample_df()
+    df["Category"] = ["Other", "Food", "Other", "Transport"]
+    df["TimeOfDay"] = ["Unknown", "Morning", "Unknown", "Night"]
+    df["Währung"] = ["CHF", "CHF", None, "CHF"]
+    indicators = quality_indicators(df)
+
+    assert indicators["rows"] == 4.0
+    assert indicators["other_category_pct"] == 50.0
+    assert indicators["unknown_timeofday_pct"] == 50.0
+    assert indicators["missing_currency_pct"] == 25.0
