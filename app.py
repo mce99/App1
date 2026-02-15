@@ -1532,7 +1532,13 @@ def main() -> None:
         with tab_plans:
             render_subscriptions(recurring, budget_table, goals_table)
     elif page == "Data & QA":
-        summary_md, report_zip = build_report_pack(filtered, kpis, monthly)
+        summary_md, report_zip, report_pdf = build_report_pack(
+            filtered,
+            kpis,
+            monthly,
+            period_table=period_table,
+            opportunity_table=opportunity_table,
+        )
         transfers = filtered[filtered["IsTransfer"]].copy()
         tab_explorer, tab_health, tab_accounts, tab_reports = st.tabs(
             ["Explorer", "Health", "Accounts", "Reports"]
@@ -1544,7 +1550,7 @@ def main() -> None:
         with tab_accounts:
             render_accounts(accounts, transfers)
         with tab_reports:
-            render_report_pack(summary_md, report_zip)
+            render_report_pack(summary_md, report_zip, report_pdf)
 
 
 if __name__ == "__main__":

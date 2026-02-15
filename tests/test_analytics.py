@@ -160,9 +160,10 @@ def test_forecast_and_report_pack_not_empty() -> None:
 
     kpis = calculate_kpis(df)
     monthly = daily_net_cashflow(df).resample("ME").sum(numeric_only=True)
-    summary, bundle = build_report_pack(df, kpis, monthly)
+    summary, bundle, pdf = build_report_pack(df, kpis, monthly)
     assert "PulseLedger Report" in summary
     assert len(bundle) > 0
+    assert pdf.startswith(b"%PDF")
 
 
 def test_detect_anomalies_and_duplicate_candidates() -> None:

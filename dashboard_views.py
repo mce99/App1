@@ -504,7 +504,7 @@ def render_data_health(health_table: pd.DataFrame, quality: dict[str, float]) ->
     cols[3].metric("Missing currency %", f"{quality['missing_currency_pct']:.1f}%")
 
 
-def render_report_pack(summary_md: str, zip_bytes: bytes) -> None:
+def render_report_pack(summary_md: str, zip_bytes: bytes, executive_pdf: bytes | None = None) -> None:
     st.header("Report Pack")
     st.caption("One-click export of summary and raw aggregates.")
     st.markdown(summary_md)
@@ -514,6 +514,13 @@ def render_report_pack(summary_md: str, zip_bytes: bytes) -> None:
         file_name="pulseledger_report_pack.zip",
         mime="application/zip",
     )
+    if executive_pdf:
+        st.download_button(
+            "Download executive brief (.pdf)",
+            data=executive_pdf,
+            file_name="pulseledger_executive_brief.pdf",
+            mime="application/pdf",
+        )
 
 
 def render_portfolio(

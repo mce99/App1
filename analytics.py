@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import io
 import json
 import re
@@ -1073,10 +1074,152 @@ def data_health_report(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["Metric", "Count"])
 
 
-def build_report_pack(df: pd.DataFrame, kpis: dict[str, float], monthly: pd.DataFrame) -> tuple[str, bytes]:
-    """Build markdown summary plus zip of raw and monthly outputs."""
+def _pdf_escape(text: str) -> str:
+    return str(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _simple_pdf_from_lines(lines: list[str], lines_per_page: int = 46) -> bytes:
+    """Create a simple text-only PDF without external dependencies."""
+    clean_lines = [str(line).strip() for line in lines if str(line).strip()]
+    if not clean_lines:
+        clean_lines = ["PulseLedger Executive Brief", "No data available."]
+
+    page_chunks = [
+        clean_lines[idx : idx + max(1, int(lines_per_page))]
+        for idx in range(0, len(clean_lines), max(1, int(lines_per_page)))
+    ]
+
+    objects: list[bytes | str | None] = [None, None]  # 1: Catalog, 2: Pages
+
+    def add_obj(payload: bytes | str) -> int:
+        objects.append(payload)
+        return len(objects)
+
+    font_id = add_obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    page_ids: list[int] = []
+
+    for chunk in page_chunks:
+        ops = ["BT", "/F1 10 Tf", "50 800 Td"]
+        for idx, line in enumerate(chunk):
+            if idx > 0:
+                ops.append("0 -15 Td")
+            ops.append(f"({_pdf_escape(line)}) Tj")
+        ops.append("ET")
+        stream_text = "\n".join(ops)
+        stream_bytes = stream_text.encode("latin-1", errors="replace")
+        content_id = add_obj(
+            f"<< /Length {len(stream_bytes)} >>\nstream\n{stream_text}\nendstream"
+        )
+        page_id = add_obj(
+            (
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+                f"/Resources << /Font << /F1 {font_id} 0 R >> >> "
+                f"/Contents {content_id} 0 R >>"
+            )
+        )
+        page_ids.append(page_id)
+
+    kids = " ".join(f"{page_id} 0 R" for page_id in page_ids)
+    objects[1] = f"<< /Type /Pages /Kids [{kids}] /Count {len(page_ids)} >>"
+    objects[0] = "<< /Type /Catalog /Pages 2 0 R >>"
+
+    payload = bytearray()
+    payload.extend(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+
+    for idx, obj in enumerate(objects, start=1):
+        offset = len(payload)
+        offsets.append(offset)
+        payload.extend(f"{idx} 0 obj\n".encode("ascii"))
+        raw = obj if isinstance(obj, bytes) else str(obj).encode("latin-1", errors="replace")
+        payload.extend(raw)
+        payload.extend(b"\nendobj\n")
+
+    xref_offset = len(payload)
+    payload.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    payload.extend(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        payload.extend(f"{off:010d} 00000 n \n".encode("ascii"))
+    payload.extend(
+        (
+            "trailer\n"
+            f"<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF"
+        ).encode("ascii")
+    )
+    return bytes(payload)
+
+
+def build_executive_pdf_report(
+    df: pd.DataFrame,
+    kpis: dict[str, float],
+    period_table: pd.DataFrame | None = None,
+    opportunity_table: pd.DataFrame | None = None,
+) -> bytes:
+    """Build a dependency-free executive PDF brief."""
+    period_table = period_table if period_table is not None else pd.DataFrame()
+    opportunity_table = opportunity_table if opportunity_table is not None else pd.DataFrame()
+
     min_date = df["Date"].min().date()
     max_date = df["Date"].max().date()
+    generated_at = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+    lines: list[str] = [
+        "PulseLedger Executive Brief",
+        f"Generated: {generated_at}",
+        f"Coverage: {min_date} to {max_date}",
+        "",
+        "Executive KPI Summary",
+        f"- Transactions: {int(kpis['transactions']):,}",
+        f"- Spending (CHF): {kpis['total_spending']:,.2f}",
+        f"- Earnings (CHF): {kpis['total_earnings']:,.2f}",
+        f"- Net cashflow (CHF): {kpis['net_cashflow']:,.2f}",
+        f"- Savings rate: {kpis['savings_rate']:.1f}%",
+        "",
+        "Period-over-period",
+    ]
+
+    if period_table.empty:
+        lines.append("- Not enough prior-period data available.")
+    else:
+        for _, row in period_table.head(8).iterrows():
+            lines.append(
+                (
+                    f"- {row['Metric']}: {float(row['CurrentValue']):,.2f} "
+                    f"(prior {float(row['PriorValue']):,.2f}, "
+                    f"delta {float(row['DeltaPct']):+.1f}%, {row['Signal']})"
+                )
+            )
+
+    lines.extend(["", "Top savings opportunities"])
+    if opportunity_table.empty:
+        lines.append("- No material opportunities identified.")
+    else:
+        for _, row in opportunity_table.head(12).iterrows():
+            lines.append(
+                (
+                    f"- {row['LeverType']} | {row['Name']}: "
+                    f"save {float(row['PotentialMonthlySavingsCHF']):,.2f} CHF/month "
+                    f"({float(row['SuggestedCutPct']):.1f}% cut)"
+                )
+            )
+
+    lines.extend(["", "Confidential - internal personal finance analysis"])
+    return _simple_pdf_from_lines(lines)
+
+
+def build_report_pack(
+    df: pd.DataFrame,
+    kpis: dict[str, float],
+    monthly: pd.DataFrame,
+    period_table: pd.DataFrame | None = None,
+    opportunity_table: pd.DataFrame | None = None,
+) -> tuple[str, bytes, bytes]:
+    """Build markdown summary, zip pack, and executive PDF brief."""
+    min_date = df["Date"].min().date()
+    max_date = df["Date"].max().date()
+    period_table = period_table if period_table is not None else pd.DataFrame()
+    opportunity_table = opportunity_table if opportunity_table is not None else pd.DataFrame()
     markdown = (
         f"# PulseLedger Report\n\n"
         f"- Period: {min_date} to {max_date}\n"
@@ -1086,6 +1229,12 @@ def build_report_pack(df: pd.DataFrame, kpis: dict[str, float], monthly: pd.Data
         f"- Net cashflow (CHF): {kpis['net_cashflow']:,.2f}\n"
         f"- Savings rate: {kpis['savings_rate']:.1f}%\n"
     )
+    executive_pdf = build_executive_pdf_report(
+        df,
+        kpis,
+        period_table=period_table,
+        opportunity_table=opportunity_table,
+    )
 
     output = io.BytesIO()
     with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -1093,7 +1242,10 @@ def build_report_pack(df: pd.DataFrame, kpis: dict[str, float], monthly: pd.Data
         zf.writestr("transactions.csv", df.to_csv(index=False))
         zf.writestr("monthly.csv", monthly.to_csv())
         zf.writestr("kpis.json", json.dumps(kpis, indent=2))
-    return markdown, output.getvalue()
+        zf.writestr("period_comparison.csv", period_table.to_csv(index=False))
+        zf.writestr("opportunities.csv", opportunity_table.to_csv(index=False))
+        zf.writestr("executive_brief.pdf", executive_pdf)
+    return markdown, output.getvalue(), executive_pdf
 
 
 def _spend_bucket(row: pd.Series) -> str:
