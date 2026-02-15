@@ -43,10 +43,12 @@ from analytics import (
     merchant_summary,
     monthly_trend_diagnostics,
     monthly_cashflow,
+    period_over_period_metrics,
     possible_duplicate_candidates,
     quality_indicators,
     recurring_transaction_candidates,
     review_queue,
+    savings_opportunity_scanner,
     spending_run_rate_projection,
     savings_scenario,
     spending_recommendations,
@@ -586,7 +588,7 @@ def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None, 
     return enriched, source_context, {"categories": category_list}
 
 
-def _apply_filters(enriched: pd.DataFrame) -> pd.DataFrame:
+def _apply_filters(enriched: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     st.sidebar.header("2) Filters")
     start_date, end_date = _init_timeframe(enriched)
 
@@ -607,22 +609,23 @@ def _apply_filters(enriched: pd.DataFrame) -> pd.DataFrame:
         selected_accounts = st.multiselect("Accounts", account_options, default=account_options)
         min_amount = st.slider("Minimum abs amount (CHF)", 0.0, max(1.0, max_amount), 0.0)
 
-    filtered = filter_by_date_range(enriched, start_date, end_date)
-    filtered = filtered[filtered["SourceFile"].isin(selected_sources)]
-    filtered = filtered[filtered["SourceAccount"].isin(selected_accounts)]
-    filtered = filtered[filtered["Category"].isin(selected_categories)]
+    scoped = enriched.copy()
+    scoped = scoped[scoped["SourceFile"].isin(selected_sources)]
+    scoped = scoped[scoped["SourceAccount"].isin(selected_accounts)]
+    scoped = scoped[scoped["Category"].isin(selected_categories)]
 
     if merchant_query:
-        filtered = filtered[
-            filtered["Merchant"].fillna("").astype(str).str.lower().str.contains(merchant_query, na=False)
+        scoped = scoped[
+            scoped["Merchant"].fillna("").astype(str).str.lower().str.contains(merchant_query, na=False)
         ]
 
     if not include_transfers:
-        filtered = filtered[~filtered["IsTransfer"]]
+        scoped = scoped[~scoped["IsTransfer"]]
 
-    filtered = filtered[(filtered["DebitCHF"].abs() >= min_amount) | (filtered["CreditCHF"].abs() >= min_amount)]
+    scoped = scoped[(scoped["DebitCHF"].abs() >= min_amount) | (scoped["CreditCHF"].abs() >= min_amount)]
+    filtered = filter_by_date_range(scoped, start_date, end_date)
 
-    return filtered
+    return filtered, scoped
 
 
 def _render_review_queue(enriched: pd.DataFrame, category_options: list[str]) -> None:
@@ -1209,7 +1212,7 @@ def main() -> None:
     if enriched is None or source_context is None:
         return
 
-    filtered = _apply_filters(enriched)
+    filtered, scoped_filtered = _apply_filters(enriched)
     if filtered.empty:
         st.warning("No transactions match your current filters.")
         return
@@ -1336,6 +1339,8 @@ def main() -> None:
     category_volatility_table = category_volatility(filtered, min_months=int(volatility_min_months))
     run_rate = spending_run_rate_projection(filtered, lookback_months=int(run_rate_lookback))
     trend_table = monthly_trend_diagnostics(filtered, lookback_months=int(trend_lookback_months))
+    period_table = period_over_period_metrics(filtered, scoped_filtered)
+    opportunity_table = savings_opportunity_scanner(filtered, top_n=20)
     momentum_table = category_momentum(filtered)
     action_plan = generate_agent_action_plan(
         kpis=kpis,
@@ -1347,7 +1352,7 @@ def main() -> None:
     )
 
     if page == "Overview":
-        render_home(kpis, daily, monthly, category_table, quality)
+        render_home(kpis, daily, monthly, category_table, quality, period_table)
         st.markdown("### What to do next")
         st.dataframe(action_plan.head(6), use_container_width=True, hide_index=True)
     elif page == "Money In/Out":
@@ -1393,7 +1398,14 @@ def main() -> None:
         with tab_actions:
             render_agent_console(action_plan, ingestion_quality)
         with tab_insights:
-            render_insights(salary_info, benchmark_table, recommendations, merchant_table, balance_table)
+            render_insights(
+                salary_info,
+                benchmark_table,
+                recommendations,
+                merchant_table,
+                balance_table,
+                opportunity_table,
+            )
         with tab_sim:
             st.markdown("### Savings scenario simulator")
             left, right = st.columns(2)

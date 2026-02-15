@@ -327,6 +327,211 @@ def chart_builder_dataset(
     return chart.round(4)
 
 
+def period_over_period_metrics(current_df: pd.DataFrame, baseline_df: pd.DataFrame) -> pd.DataFrame:
+    """Compare selected period against the immediately preceding equal-length period."""
+    if current_df.empty or current_df["Date"].dropna().empty:
+        return pd.DataFrame(
+            columns=["Metric", "CurrentValue", "PriorValue", "DeltaAbs", "DeltaPct", "Signal"]
+        )
+
+    current_start = pd.Timestamp(current_df["Date"].min()).normalize()
+    current_end = pd.Timestamp(current_df["Date"].max()).normalize()
+    window_days = (current_end - current_start).days + 1
+    prior_end = current_start - pd.Timedelta(days=1)
+    prior_start = prior_end - pd.Timedelta(days=max(window_days - 1, 0))
+
+    prior = baseline_df[
+        pd.to_datetime(baseline_df["Date"], errors="coerce").dt.normalize().between(prior_start, prior_end)
+    ].copy()
+
+    current_kpi = calculate_kpis(current_df)
+    prior_kpi = calculate_kpis(prior) if not prior.empty else calculate_kpis(current_df.iloc[0:0])
+
+    rows = [
+        ("Spending (CHF)", current_kpi["total_spending"], prior_kpi["total_spending"], True),
+        ("Earnings (CHF)", current_kpi["total_earnings"], prior_kpi["total_earnings"], False),
+        ("Net cashflow (CHF)", current_kpi["net_cashflow"], prior_kpi["net_cashflow"], False),
+        ("Savings rate (%)", current_kpi["savings_rate"], prior_kpi["savings_rate"], False),
+        (
+            "Avg spend / calendar day (CHF)",
+            current_kpi["avg_spending_per_calendar_day"],
+            prior_kpi["avg_spending_per_calendar_day"],
+            True,
+        ),
+        ("Transactions", current_kpi["transactions"], prior_kpi["transactions"], False),
+    ]
+
+    out_rows: list[dict[str, object]] = []
+    for metric, current, prior_value, lower_is_better in rows:
+        curr = float(current or 0.0)
+        prev = float(prior_value or 0.0)
+        delta = curr - prev
+        delta_pct = (delta / abs(prev) * 100.0) if prev != 0 else 0.0
+        if delta == 0:
+            signal = "Flat"
+        elif lower_is_better:
+            signal = "Improved" if delta < 0 else "Worse"
+        else:
+            signal = "Improved" if delta > 0 else "Worse"
+        out_rows.append(
+            {
+                "Metric": metric,
+                "CurrentValue": round(curr, 4),
+                "PriorValue": round(prev, 4),
+                "DeltaAbs": round(delta, 4),
+                "DeltaPct": round(delta_pct, 2),
+                "Signal": signal,
+            }
+        )
+
+    return pd.DataFrame(out_rows)
+
+
+def spending_heatmap_matrix(df: pd.DataFrame, value_metric: str = "Spending") -> pd.DataFrame:
+    """Weekday x hour matrix for spending/earnings/net/transactions."""
+    if df.empty:
+        return pd.DataFrame(0.0, index=_WEEKDAY_ORDER, columns=range(24))
+
+    work = df.copy()
+    hour_from_time = (
+        work["Time"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.split(".")
+        .str[0]
+        .str.extract(r"^(\d{1,2})")[0]
+    )
+    hour = pd.to_numeric(hour_from_time, errors="coerce")
+    if "SortDateTime" in work.columns:
+        hour = hour.fillna(pd.to_datetime(work["SortDateTime"], errors="coerce").dt.hour)
+    work["Hour"] = hour
+    work["Weekday"] = pd.to_datetime(work["Date"], errors="coerce").dt.day_name()
+    work = work[(work["Hour"].notna()) & (work["Weekday"].notna())].copy()
+    if work.empty:
+        return pd.DataFrame(0.0, index=_WEEKDAY_ORDER, columns=range(24))
+
+    debit = pd.to_numeric(work.get("DebitCHF", 0.0), errors="coerce").fillna(0.0)
+    credit = pd.to_numeric(work.get("CreditCHF", 0.0), errors="coerce").fillna(0.0)
+    if value_metric == "Spending":
+        work["Value"] = debit
+    elif value_metric == "Earnings":
+        work["Value"] = credit
+    elif value_metric == "Net":
+        work["Value"] = credit - debit
+    elif value_metric == "Transactions":
+        work["Value"] = 1.0
+    else:
+        raise ValueError(f"Unsupported value_metric: {value_metric}")
+
+    grouped = (
+        work.groupby(["Weekday", "Hour"], dropna=False)["Value"].sum().reset_index()
+    )
+    grouped["Hour"] = pd.to_numeric(grouped["Hour"], errors="coerce").astype(int)
+    matrix = (
+        grouped.pivot(index="Weekday", columns="Hour", values="Value")
+        .reindex(index=_WEEKDAY_ORDER, columns=range(24))
+        .fillna(0.0)
+    )
+    return matrix
+
+
+def savings_opportunity_scanner(df: pd.DataFrame, top_n: int = 20) -> pd.DataFrame:
+    """Identify biggest monthly savings opportunities by category and merchant."""
+    if df.empty:
+        return pd.DataFrame(
+            columns=[
+                "LeverType",
+                "Name",
+                "AvgMonthlySpendCHF",
+                "SuggestedCutPct",
+                "PotentialMonthlySavingsCHF",
+                "PotentialAnnualSavingsCHF",
+            ]
+        )
+
+    work = df.copy()
+    work["Month"] = pd.to_datetime(work["Date"], errors="coerce").dt.to_period("M").astype(str)
+    spend = work[work["DebitCHF"] > 0].copy()
+    if spend.empty:
+        return pd.DataFrame(
+            columns=[
+                "LeverType",
+                "Name",
+                "AvgMonthlySpendCHF",
+                "SuggestedCutPct",
+                "PotentialMonthlySavingsCHF",
+                "PotentialAnnualSavingsCHF",
+            ]
+        )
+
+    protective_keywords = [
+        "RENT",
+        "HOUS",
+        "INSUR",
+        "UTILIT",
+        "HEALTH",
+        "TAX",
+        "LOAN",
+    ]
+
+    def _category_cut_pct(name: str) -> float:
+        upper = str(name).upper()
+        if any(keyword in upper for keyword in protective_keywords):
+            return 0.04
+        return 0.12
+
+    cat_monthly = (
+        spend.groupby(["Category", "Month"], dropna=False)["DebitCHF"]
+        .sum()
+        .groupby("Category")
+        .mean()
+        .sort_values(ascending=False)
+    )
+    cat_rows = []
+    for name, avg_monthly in cat_monthly.items():
+        cut_pct = _category_cut_pct(str(name))
+        monthly_save = float(avg_monthly) * cut_pct
+        cat_rows.append(
+            {
+                "LeverType": "Category",
+                "Name": str(name),
+                "AvgMonthlySpendCHF": float(avg_monthly),
+                "SuggestedCutPct": cut_pct * 100.0,
+                "PotentialMonthlySavingsCHF": monthly_save,
+                "PotentialAnnualSavingsCHF": monthly_save * 12.0,
+            }
+        )
+
+    merchant_key = "MerchantNormalized" if "MerchantNormalized" in spend.columns else "Merchant"
+    mer_monthly = (
+        spend.groupby([merchant_key, "Month"], dropna=False)["DebitCHF"]
+        .sum()
+        .groupby(merchant_key)
+        .mean()
+        .sort_values(ascending=False)
+        .head(25)
+    )
+    mer_rows = []
+    for name, avg_monthly in mer_monthly.items():
+        monthly_save = float(avg_monthly) * 0.08
+        mer_rows.append(
+            {
+                "LeverType": "Merchant",
+                "Name": str(name),
+                "AvgMonthlySpendCHF": float(avg_monthly),
+                "SuggestedCutPct": 8.0,
+                "PotentialMonthlySavingsCHF": monthly_save,
+                "PotentialAnnualSavingsCHF": monthly_save * 12.0,
+            }
+        )
+
+    table = pd.DataFrame(cat_rows + mer_rows)
+    if table.empty:
+        return table
+    return table.sort_values("PotentialMonthlySavingsCHF", ascending=False).head(int(max(top_n, 1)))
+
+
 def merchant_summary(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
     """Top merchants by total spending."""
     grouped = (

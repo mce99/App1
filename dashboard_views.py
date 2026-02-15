@@ -6,12 +6,18 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
-from analytics import chart_builder_dataset
+from analytics import chart_builder_dataset, spending_heatmap_matrix
 from metric_guide import METRIC_GUIDE
 
 
 def _fmt_chf(value: float) -> str:
     return f"{value:,.2f}"
+
+
+def _fmt_delta(value: float) -> str:
+    if value > 0:
+        return f"+{value:,.1f}%"
+    return f"{value:,.1f}%"
 
 
 def render_kpis(kpis: dict[str, float]) -> None:
@@ -56,9 +62,39 @@ def render_home(
     monthly: pd.DataFrame,
     category_table: pd.DataFrame,
     quality: dict[str, float],
+    period_table: pd.DataFrame,
 ) -> None:
     st.header("Home")
     render_kpis(kpis)
+
+    st.markdown("### Period vs prior window")
+    if period_table.empty:
+        st.info("Not enough data to compare with the immediately prior period.")
+    else:
+        focus = period_table.set_index("Metric")
+        c1, c2, c3 = st.columns(3)
+        if "Net cashflow (CHF)" in focus.index:
+            row = focus.loc["Net cashflow (CHF)"]
+            c1.metric(
+                "Net cashflow vs prior",
+                _fmt_chf(float(row["CurrentValue"])),
+                _fmt_delta(float(row["DeltaPct"])),
+            )
+        if "Spending (CHF)" in focus.index:
+            row = focus.loc["Spending (CHF)"]
+            c2.metric(
+                "Spending vs prior",
+                _fmt_chf(float(row["CurrentValue"])),
+                _fmt_delta(float(row["DeltaPct"])),
+            )
+        if "Earnings (CHF)" in focus.index:
+            row = focus.loc["Earnings (CHF)"]
+            c3.metric(
+                "Earnings vs prior",
+                _fmt_chf(float(row["CurrentValue"])),
+                _fmt_delta(float(row["DeltaPct"])),
+            )
+        st.dataframe(period_table, use_container_width=True, hide_index=True)
 
     top_left, top_right = st.columns(2)
     with top_left:
@@ -199,6 +235,37 @@ def render_behavior(hourly: pd.DataFrame, weekday_avg: pd.DataFrame, filtered: p
         st.markdown("### Avg net by weekday")
         st.bar_chart(weekday_avg[["Net"]])
 
+    st.markdown("### Weekday-hour heatmap")
+    heat_metric = st.selectbox(
+        "Heatmap metric",
+        ["Spending", "Earnings", "Net", "Transactions"],
+        index=0,
+        key="behavior_heatmap_metric",
+    )
+    matrix = spending_heatmap_matrix(filtered, value_metric=heat_metric)
+
+    left, right = st.columns([2, 1])
+    with left:
+        st.dataframe(matrix.round(2), use_container_width=True)
+    with right:
+        hotspots = (
+            matrix.stack()
+            .reset_index(name="Value")
+            .rename(columns={"level_0": "Weekday", "level_1": "Hour"})
+        )
+        hotspots = hotspots[hotspots["Value"].abs() > 0].copy()
+        if hotspots.empty:
+            st.info("No heatmap hotspots for current filters.")
+        else:
+            hotspots = hotspots.sort_values("Value", ascending=False).head(12)
+            hotspots["HourBlock"] = hotspots["Hour"].apply(lambda h: f"{int(h):02d}:00")
+            st.markdown("### Top hotspots")
+            st.dataframe(
+                hotspots[["Weekday", "HourBlock", "Value"]],
+                use_container_width=True,
+                hide_index=True,
+            )
+
 
 def render_chart_builder(filtered: pd.DataFrame) -> None:
     st.header("Chart Builder")
@@ -320,7 +387,51 @@ def render_data_explorer(filtered: pd.DataFrame, source_context: pd.DataFrame) -
         st.dataframe(source_context, use_container_width=True)
 
     st.markdown("### Ordered transaction ledger")
-    st.dataframe(filtered, use_container_width=True, height=520)
+    query = st.text_input(
+        "Search ledger (merchant/category/notes/account)",
+        value="",
+        key="data_explorer_query",
+    ).strip().lower()
+    max_cap = max(1, min(int(len(filtered)), 5000))
+    min_rows = 1 if max_cap < 50 else 50
+    step = 1 if max_cap < 50 else 50
+    default_rows = min(1500, max_cap)
+    rows_to_show = st.slider(
+        "Rows to display",
+        min_value=min_rows,
+        max_value=max_cap,
+        value=default_rows,
+        step=step,
+        key="data_explorer_rows",
+    )
+
+    view = filtered.copy()
+    if query:
+        search_cols = [
+            col
+            for col in [
+                "Merchant",
+                "Category",
+                "Beschreibung1",
+                "Beschreibung2",
+                "Beschreibung3",
+                "Fussnoten",
+                "SourceAccount",
+            ]
+            if col in view.columns
+        ]
+        if search_cols:
+            text_blob = (
+                view[search_cols]
+                .fillna("")
+                .astype(str)
+                .agg(" | ".join, axis=1)
+                .str.lower()
+            )
+            view = view[text_blob.str.contains(query, na=False)]
+
+    st.caption(f"Showing {min(len(view), rows_to_show):,} of {len(view):,} matching rows.")
+    st.dataframe(view.head(rows_to_show), use_container_width=True, height=520)
 
 
 def render_metric_guide() -> None:
@@ -448,6 +559,7 @@ def render_insights(
     recommendations: pd.DataFrame,
     merchant_table: pd.DataFrame,
     balance_table: pd.DataFrame,
+    opportunity_table: pd.DataFrame,
 ) -> None:
     st.header("Insights & Optimization")
     st.caption("Understand behavior, compare against benchmarks, and identify concrete spend reductions.")
@@ -477,6 +589,17 @@ def render_insights(
 
     st.markdown("### Spend reduction recommendations")
     st.dataframe(recommendations, use_container_width=True)
+
+    st.markdown("### Opportunity scanner")
+    if opportunity_table.empty:
+        st.info("No material savings opportunities detected in current filters.")
+    else:
+        top_monthly = float(opportunity_table["PotentialMonthlySavingsCHF"].sum())
+        top_annual = float(opportunity_table["PotentialAnnualSavingsCHF"].sum())
+        o1, o2 = st.columns(2)
+        o1.metric("Potential monthly savings (top levers)", f"{top_monthly:,.2f}")
+        o2.metric("Potential annual savings (top levers)", f"{top_annual:,.2f}")
+        st.dataframe(opportunity_table, use_container_width=True, hide_index=True)
 
     lower_left, lower_right = st.columns(2)
     with lower_left:

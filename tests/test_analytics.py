@@ -23,10 +23,13 @@ from analytics import (
     monthly_trend_diagnostics,
     monthly_salary_estimate,
     merchant_insights,
+    period_over_period_metrics,
     possible_duplicate_candidates,
     quality_indicators,
     recurring_transaction_candidates,
+    savings_opportunity_scanner,
     savings_scenario,
+    spending_heatmap_matrix,
     spending_run_rate_projection,
     spending_recommendations,
     spending_velocity,
@@ -493,3 +496,48 @@ def test_chart_builder_dataset_supports_daily_weekly_monthly_intervals() -> None
     assert float(daily["Spending"].sum()) == 60.0
     assert float(weekly["Spending"].sum()) == 60.0
     assert float(monthly["Spending"].sum()) == 60.0
+
+
+def test_period_over_period_metrics_compares_equal_windows() -> None:
+    df = pd.DataFrame(
+        [
+            {"Date": "2026-01-01", "DebitCHF": 100.0, "CreditCHF": 0.0},
+            {"Date": "2026-01-02", "DebitCHF": 50.0, "CreditCHF": 0.0},
+            {"Date": "2026-01-03", "DebitCHF": 0.0, "CreditCHF": 500.0},
+            {"Date": "2026-01-04", "DebitCHF": 90.0, "CreditCHF": 0.0},
+            {"Date": "2026-01-05", "DebitCHF": 40.0, "CreditCHF": 0.0},
+            {"Date": "2026-01-06", "DebitCHF": 0.0, "CreditCHF": 520.0},
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+    current = df[df["Date"].dt.date.between(pd.to_datetime("2026-01-04").date(), pd.to_datetime("2026-01-06").date())]
+
+    period = period_over_period_metrics(current, df)
+    assert not period.empty
+    spending_row = period[period["Metric"] == "Spending (CHF)"].iloc[0]
+    assert float(spending_row["CurrentValue"]) == 130.0
+    assert float(spending_row["PriorValue"]) == 150.0
+    assert float(spending_row["DeltaAbs"]) == -20.0
+    assert spending_row["Signal"] == "Improved"
+
+
+def test_spending_heatmap_matrix_and_opportunity_scanner() -> None:
+    df = pd.DataFrame(
+        [
+            {"Date": "2026-02-02", "Time": "08:00:00", "DebitCHF": 20.0, "CreditCHF": 0.0, "Category": "Food", "Merchant": "Coop"},
+            {"Date": "2026-02-02", "Time": "09:00:00", "DebitCHF": 30.0, "CreditCHF": 0.0, "Category": "Food", "Merchant": "Coop"},
+            {"Date": "2026-02-03", "Time": "20:00:00", "DebitCHF": 0.0, "CreditCHF": 100.0, "Category": "Income", "Merchant": "Employer"},
+            {"Date": "2026-03-02", "Time": "08:00:00", "DebitCHF": 60.0, "CreditCHF": 0.0, "Category": "Food", "Merchant": "Coop"},
+            {"Date": "2026-03-03", "Time": "18:00:00", "DebitCHF": 80.0, "CreditCHF": 0.0, "Category": "Dining", "Merchant": "Restaurant"},
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["MerchantNormalized"] = df["Merchant"].str.upper()
+
+    matrix = spending_heatmap_matrix(df, value_metric="Spending")
+    opportunities = savings_opportunity_scanner(df, top_n=10)
+
+    assert matrix.shape == (7, 24)
+    assert float(matrix.to_numpy().sum()) == 190.0
+    assert not opportunities.empty
+    assert "PotentialMonthlySavingsCHF" in opportunities.columns
