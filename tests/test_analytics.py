@@ -5,8 +5,10 @@ from analytics import (
     balance_timeline,
     benchmark_assessment,
     build_report_pack,
+    cashflow_stability_metrics,
     calculate_kpis,
     category_momentum,
+    category_volatility,
     category_breakdown,
     daily_net_cashflow,
     detect_anomalies,
@@ -14,7 +16,9 @@ from analytics import (
     forecast_cashflow,
     generate_agent_action_plan,
     hourly_spending_profile,
+    income_concentration_table,
     ingestion_quality_by_source,
+    merchant_concentration_table,
     monthly_trend_diagnostics,
     monthly_salary_estimate,
     merchant_insights,
@@ -22,8 +26,11 @@ from analytics import (
     quality_indicators,
     recurring_transaction_candidates,
     savings_scenario,
+    spending_run_rate_projection,
     spending_recommendations,
     spending_velocity,
+    transaction_size_distribution,
+    weekday_weekend_split,
     weekday_average_cashflow,
 )
 
@@ -322,3 +329,36 @@ def test_savings_scenario_respects_exclusions() -> None:
     assert not scenario.empty
     assert "Utilities & Bills" not in scenario["Category"].tolist()
     assert float(scenario["SuggestedCutCHF"].sum()) <= 300.0 + 1e-6
+
+
+def test_deep_analytics_helpers_return_expected_shapes() -> None:
+    df = pd.DataFrame(
+        [
+            {"Date": "2026-01-05", "DebitCHF": 120.0, "CreditCHF": 0.0, "Category": "Food", "Merchant": "Coop"},
+            {"Date": "2026-01-07", "DebitCHF": 0.0, "CreditCHF": 6000.0, "Category": "Income", "Merchant": "Employer"},
+            {"Date": "2026-02-05", "DebitCHF": 150.0, "CreditCHF": 0.0, "Category": "Food", "Merchant": "Coop"},
+            {"Date": "2026-02-08", "DebitCHF": 80.0, "CreditCHF": 0.0, "Category": "Transport", "Merchant": "SBB"},
+            {"Date": "2026-02-20", "DebitCHF": 0.0, "CreditCHF": 6100.0, "Category": "Income", "Merchant": "Employer"},
+            {"Date": "2026-03-02", "DebitCHF": 200.0, "CreditCHF": 0.0, "Category": "Food", "Merchant": "Migros"},
+            {"Date": "2026-03-10", "DebitCHF": 0.0, "CreditCHF": 6150.0, "Category": "Income", "Merchant": "Employer"},
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    merchant = merchant_concentration_table(df, top_n=5)
+    income = income_concentration_table(df, top_n=5)
+    stability = cashflow_stability_metrics(df)
+    split = weekday_weekend_split(df)
+    size_dist = transaction_size_distribution(df)
+    volatility = category_volatility(df, min_months=2)
+    run_rate = spending_run_rate_projection(df, lookback_months=2)
+
+    assert not merchant.empty
+    assert "CumulativeSharePct" in merchant.columns
+    assert not income.empty
+    assert float(stability["months"]) == 3.0
+    assert not split.empty
+    assert set(split["Segment"].tolist()).issubset({"Weekday", "Weekend"})
+    assert len(size_dist) == 7
+    assert "CoeffVar" in volatility.columns
+    assert float(run_rate["lookback_months"]) == 2.0

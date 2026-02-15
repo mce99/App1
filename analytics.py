@@ -964,6 +964,246 @@ def spending_recommendations(df: pd.DataFrame, benchmark_table: pd.DataFrame) ->
     return pd.DataFrame(recommendations).sort_values("Priority").reset_index(drop=True)
 
 
+def merchant_concentration_table(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
+    """Merchant concentration on spending side with cumulative share."""
+    work = df.copy()
+    if "MerchantNormalized" not in work.columns:
+        work["MerchantNormalized"] = work.get("Merchant", "").astype(str).str.upper()
+    spend = (
+        work.groupby("MerchantNormalized", dropna=False)["DebitCHF"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    spend = spend[spend > 0]
+    if spend.empty:
+        return pd.DataFrame(columns=["Merchant", "SpendingCHF", "SharePct", "CumulativeSharePct"])
+
+    total = float(spend.sum())
+    out = spend.head(int(top_n)).reset_index().rename(
+        columns={"MerchantNormalized": "Merchant", "DebitCHF": "SpendingCHF"}
+    )
+    out["SharePct"] = out["SpendingCHF"].apply(lambda x: (x / total * 100.0) if total else 0.0)
+    out["CumulativeSharePct"] = out["SharePct"].cumsum()
+    return out
+
+
+def income_concentration_table(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
+    """Income source concentration with cumulative share."""
+    work = df.copy()
+    if "MerchantNormalized" not in work.columns:
+        work["MerchantNormalized"] = work.get("Merchant", "").astype(str).str.upper()
+    income = (
+        work.groupby("MerchantNormalized", dropna=False)["CreditCHF"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    income = income[income > 0]
+    if income.empty:
+        return pd.DataFrame(columns=["Source", "EarningsCHF", "SharePct", "CumulativeSharePct"])
+
+    total = float(income.sum())
+    out = income.head(int(top_n)).reset_index().rename(
+        columns={"MerchantNormalized": "Source", "CreditCHF": "EarningsCHF"}
+    )
+    out["SharePct"] = out["EarningsCHF"].apply(lambda x: (x / total * 100.0) if total else 0.0)
+    out["CumulativeSharePct"] = out["SharePct"].cumsum()
+    return out
+
+
+def cashflow_stability_metrics(df: pd.DataFrame) -> dict[str, float]:
+    """Stability diagnostics on monthly net cashflow."""
+    monthly = monthly_cashflow(df)
+    if monthly.empty:
+        return {
+            "months": 0.0,
+            "negative_months": 0.0,
+            "negative_month_ratio_pct": 0.0,
+            "avg_net_monthly": 0.0,
+            "median_net_monthly": 0.0,
+            "net_std_monthly": 0.0,
+            "net_coeff_var": 0.0,
+            "max_drawdown_monthly_net": 0.0,
+            "longest_negative_streak": 0.0,
+            "net_trend_slope": 0.0,
+        }
+
+    net = monthly["Net"].astype(float)
+    months = int(len(net))
+    negative_mask = net < 0
+    negative_months = int(negative_mask.sum())
+    negative_ratio = (negative_months / months * 100.0) if months else 0.0
+    avg_net = float(net.mean())
+    median_net = float(net.median())
+    net_std = float(net.std(ddof=0)) if months > 1 else 0.0
+    coeff_var = float(net_std / abs(avg_net)) if avg_net != 0 else 0.0
+
+    cumulative = net.cumsum()
+    running_peak = cumulative.cummax()
+    drawdown = running_peak - cumulative
+    max_drawdown = float(drawdown.max()) if not drawdown.empty else 0.0
+
+    longest_streak = 0
+    current_streak = 0
+    for is_negative in negative_mask.tolist():
+        if is_negative:
+            current_streak += 1
+            longest_streak = max(longest_streak, current_streak)
+        else:
+            current_streak = 0
+
+    if months > 1:
+        x = pd.Series(range(months), dtype=float)
+        y = net.reset_index(drop=True)
+        x_mean = float(x.mean())
+        y_mean = float(y.mean())
+        num = float(((x - x_mean) * (y - y_mean)).sum())
+        den = float(((x - x_mean) ** 2).sum())
+        slope = num / den if den else 0.0
+    else:
+        slope = 0.0
+
+    return {
+        "months": float(months),
+        "negative_months": float(negative_months),
+        "negative_month_ratio_pct": float(negative_ratio),
+        "avg_net_monthly": avg_net,
+        "median_net_monthly": median_net,
+        "net_std_monthly": net_std,
+        "net_coeff_var": coeff_var,
+        "max_drawdown_monthly_net": max_drawdown,
+        "longest_negative_streak": float(longest_streak),
+        "net_trend_slope": float(slope),
+    }
+
+
+def weekday_weekend_split(df: pd.DataFrame) -> pd.DataFrame:
+    """Compare weekday vs weekend spending/earnings behavior."""
+    work = df.copy()
+    if work.empty:
+        return pd.DataFrame(columns=["Segment", "Transactions", "SpendingCHF", "EarningsCHF", "NetCHF"])
+    work["Segment"] = work["Date"].dt.dayofweek.apply(lambda v: "Weekend" if int(v) >= 5 else "Weekday")
+    out = (
+        work.groupby("Segment", dropna=False)
+        .agg(
+            Transactions=("Segment", "size"),
+            SpendingCHF=("DebitCHF", "sum"),
+            EarningsCHF=("CreditCHF", "sum"),
+        )
+        .reset_index()
+    )
+    out["NetCHF"] = out["EarningsCHF"] - out["SpendingCHF"]
+    total_spend = float(out["SpendingCHF"].sum())
+    total_earn = float(out["EarningsCHF"].sum())
+    out["SpendingSharePct"] = out["SpendingCHF"].apply(lambda x: (x / total_spend * 100.0) if total_spend else 0.0)
+    out["EarningsSharePct"] = out["EarningsCHF"].apply(lambda x: (x / total_earn * 100.0) if total_earn else 0.0)
+    return out.sort_values("Segment").reset_index(drop=True)
+
+
+def transaction_size_distribution(df: pd.DataFrame) -> pd.DataFrame:
+    """Distribution of transaction sizes for spending and earnings."""
+    bins = [0.0, 20.0, 50.0, 100.0, 250.0, 500.0, 1000.0, float("inf")]
+    labels = [
+        "0-20",
+        "20-50",
+        "50-100",
+        "100-250",
+        "250-500",
+        "500-1000",
+        "1000+",
+    ]
+    work = df.copy()
+    if work.empty:
+        return pd.DataFrame(
+            {
+                "Band": labels,
+                "SpendingTx": [0] * len(labels),
+                "SpendingCHF": [0.0] * len(labels),
+                "EarningsTx": [0] * len(labels),
+                "EarningsCHF": [0.0] * len(labels),
+            }
+        )
+
+    spend = work[work["DebitCHF"] > 0].copy()
+    earn = work[work["CreditCHF"] > 0].copy()
+    if not spend.empty:
+        spend["Band"] = pd.cut(spend["DebitCHF"], bins=bins, labels=labels, include_lowest=True, right=False)
+    if not earn.empty:
+        earn["Band"] = pd.cut(earn["CreditCHF"], bins=bins, labels=labels, include_lowest=True, right=False)
+
+    spend_summary = (
+        spend.groupby("Band", observed=False)["DebitCHF"]
+        .agg(SpendingTx="count", SpendingCHF="sum")
+        .reindex(labels, fill_value=0)
+        if not spend.empty
+        else pd.DataFrame(index=labels, data={"SpendingTx": 0, "SpendingCHF": 0.0})
+    )
+    earn_summary = (
+        earn.groupby("Band", observed=False)["CreditCHF"]
+        .agg(EarningsTx="count", EarningsCHF="sum")
+        .reindex(labels, fill_value=0)
+        if not earn.empty
+        else pd.DataFrame(index=labels, data={"EarningsTx": 0, "EarningsCHF": 0.0})
+    )
+
+    out = pd.concat([spend_summary, earn_summary], axis=1).reset_index().rename(columns={"index": "Band"})
+    return out
+
+
+def category_volatility(df: pd.DataFrame, min_months: int = 3) -> pd.DataFrame:
+    """Category volatility based on monthly spending history."""
+    work = df.copy()
+    if work.empty:
+        return pd.DataFrame()
+    work["Month"] = work["Date"].dt.to_period("M").astype(str)
+    spend = work[work["DebitCHF"] > 0]
+    if spend.empty:
+        return pd.DataFrame()
+
+    month_cat = spend.groupby(["Category", "Month"], dropna=False)["DebitCHF"].sum().reset_index()
+    stats = month_cat.groupby("Category")["DebitCHF"].agg(
+        Months="count", AvgMonthlySpend="mean", StdMonthlySpend="std", MedianMonthlySpend="median", MaxMonthlySpend="max"
+    )
+    stats["StdMonthlySpend"] = stats["StdMonthlySpend"].fillna(0.0)
+    stats["CoeffVar"] = stats.apply(
+        lambda row: (float(row["StdMonthlySpend"]) / float(row["AvgMonthlySpend"])) if float(row["AvgMonthlySpend"]) > 0 else 0.0,
+        axis=1,
+    )
+    stats = stats[stats["Months"] >= int(min_months)]
+    if stats.empty:
+        return pd.DataFrame()
+    return stats.sort_values("StdMonthlySpend", ascending=False).reset_index()
+
+
+def spending_run_rate_projection(df: pd.DataFrame, lookback_months: int = 3) -> dict[str, float]:
+    """Run-rate projection from recent monthly behavior."""
+    monthly = monthly_cashflow(df)
+    if monthly.empty:
+        return {
+            "lookback_months": float(lookback_months),
+            "avg_monthly_spending": 0.0,
+            "avg_monthly_earnings": 0.0,
+            "avg_monthly_net": 0.0,
+            "projected_annual_spending": 0.0,
+            "projected_annual_earnings": 0.0,
+            "projected_annual_net": 0.0,
+        }
+
+    recent = monthly.tail(max(int(lookback_months), 1))
+    avg_spending = float(recent["Spending"].mean())
+    avg_earnings = float(recent["Earnings"].mean())
+    avg_net = float(recent["Net"].mean())
+
+    return {
+        "lookback_months": float(len(recent)),
+        "avg_monthly_spending": avg_spending,
+        "avg_monthly_earnings": avg_earnings,
+        "avg_monthly_net": avg_net,
+        "projected_annual_spending": avg_spending * 12.0,
+        "projected_annual_earnings": avg_earnings * 12.0,
+        "projected_annual_net": avg_net * 12.0,
+    }
+
+
 def monthly_trend_diagnostics(df: pd.DataFrame, lookback_months: int = 12) -> pd.DataFrame:
     """Monthly trend diagnostics with momentum and volatility features."""
     monthly = monthly_cashflow(df)

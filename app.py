@@ -20,7 +20,9 @@ from analytics import (
     benchmark_assessment,
     budget_progress,
     build_report_pack,
+    cashflow_stability_metrics,
     calculate_kpis,
+    category_volatility,
     category_breakdown,
     daily_net_cashflow,
     data_health_report,
@@ -32,8 +34,10 @@ from analytics import (
     goals_progress,
     hourly_spending_profile,
     ingestion_quality_by_source,
+    income_concentration_table,
     income_source_summary,
     category_momentum,
+    merchant_concentration_table,
     merchant_insights,
     monthly_salary_estimate,
     merchant_summary,
@@ -43,9 +47,12 @@ from analytics import (
     quality_indicators,
     recurring_transaction_candidates,
     review_queue,
+    spending_run_rate_projection,
     savings_scenario,
     spending_recommendations,
     spending_velocity,
+    transaction_size_distribution,
+    weekday_weekend_split,
     weekday_average_cashflow,
 )
 from categorization import DEFAULT_KEYWORD_MAP, assign_categories_with_confidence
@@ -1157,6 +1164,39 @@ def main() -> None:
             height=220,
         )
     benchmark_cfg = _parse_json_dict(benchmark_json, default_benchmarks)
+    with st.sidebar.expander("Deep analytics settings", expanded=False):
+        concentration_top_n = st.slider(
+            "Top merchants / sources",
+            min_value=5,
+            max_value=50,
+            value=20,
+            step=1,
+            key="deep_top_n",
+        )
+        run_rate_lookback = st.slider(
+            "Run-rate lookback (months)",
+            min_value=1,
+            max_value=12,
+            value=3,
+            step=1,
+            key="deep_run_rate_lookback",
+        )
+        volatility_min_months = st.slider(
+            "Category volatility min months",
+            min_value=2,
+            max_value=12,
+            value=3,
+            step=1,
+            key="deep_volatility_min_months",
+        )
+        trend_lookback_months = st.slider(
+            "Trend lookback (months)",
+            min_value=3,
+            max_value=36,
+            value=12,
+            step=1,
+            key="deep_trend_lookback",
+        )
 
     salary_info = monthly_salary_estimate(filtered)
     benchmark_table = benchmark_assessment(
@@ -1165,7 +1205,14 @@ def main() -> None:
         benchmark_cfg=benchmark_cfg,
     )
     recommendations = spending_recommendations(filtered, benchmark_table)
-    trend_table = monthly_trend_diagnostics(filtered, lookback_months=12)
+    stability_metrics = cashflow_stability_metrics(filtered)
+    merchant_concentration = merchant_concentration_table(filtered, top_n=int(concentration_top_n))
+    income_concentration = income_concentration_table(filtered, top_n=int(concentration_top_n))
+    size_distribution = transaction_size_distribution(filtered)
+    weekend_split = weekday_weekend_split(filtered)
+    category_volatility_table = category_volatility(filtered, min_months=int(volatility_min_months))
+    run_rate = spending_run_rate_projection(filtered, lookback_months=int(run_rate_lookback))
+    trend_table = monthly_trend_diagnostics(filtered, lookback_months=int(trend_lookback_months))
     momentum_table = category_momentum(filtered)
     action_plan = generate_agent_action_plan(
         kpis=kpis,
@@ -1207,11 +1254,12 @@ def main() -> None:
             render_spending_map(map_points)
     elif page == "Plan & Improve":
         forecast = forecast_cashflow(filtered, recurring)
-        tab_actions, tab_insights, tab_sim, tab_lab, tab_ai, tab_anom, tab_forecast, tab_plans = st.tabs(
+        tab_actions, tab_insights, tab_sim, tab_deep, tab_lab, tab_ai, tab_anom, tab_forecast, tab_plans = st.tabs(
             [
                 "Action queue",
                 "Insights",
                 "Simulator",
+                "Deep Analytics",
                 "Category Lab",
                 "AI Coach",
                 "Anomalies",
@@ -1279,6 +1327,57 @@ def main() -> None:
                 st.info("Not enough month-over-month category data yet.")
             else:
                 st.dataframe(momentum_table.head(20), use_container_width=True, hide_index=True)
+        with tab_deep:
+            st.caption(
+                f"Settings: top {int(concentration_top_n)} merchants/sources, "
+                f"run-rate {int(run_rate_lookback)} months, "
+                f"volatility min {int(volatility_min_months)} months."
+            )
+            st.markdown("### Cashflow stability")
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Negative month ratio", f"{stability_metrics['negative_month_ratio_pct']:.1f}%")
+            d2.metric("Net monthly volatility", f"{stability_metrics['net_std_monthly']:,.0f}")
+            d3.metric("Longest negative streak", f"{int(stability_metrics['longest_negative_streak'])}")
+            d4.metric("Max drawdown (CHF)", f"{stability_metrics['max_drawdown_monthly_net']:,.0f}")
+
+            rr1, rr2, rr3 = st.columns(3)
+            rr1.metric("Run-rate annual spending", f"{run_rate['projected_annual_spending']:,.0f}")
+            rr2.metric("Run-rate annual earnings", f"{run_rate['projected_annual_earnings']:,.0f}")
+            rr3.metric("Run-rate annual net", f"{run_rate['projected_annual_net']:,.0f}")
+
+            left, right = st.columns(2)
+            with left:
+                st.markdown("### Merchant concentration")
+                if merchant_concentration.empty:
+                    st.info("No spending concentration data.")
+                else:
+                    st.bar_chart(merchant_concentration.set_index("Merchant")[["SharePct"]].head(10))
+                    st.dataframe(merchant_concentration, use_container_width=True, hide_index=True)
+
+            with right:
+                st.markdown("### Income concentration")
+                if income_concentration.empty:
+                    st.info("No income concentration data.")
+                else:
+                    st.bar_chart(income_concentration.set_index("Source")[["SharePct"]].head(10))
+                    st.dataframe(income_concentration, use_container_width=True, hide_index=True)
+
+            mid_left, mid_right = st.columns(2)
+            with mid_left:
+                st.markdown("### Weekday vs weekend split")
+                if weekend_split.empty:
+                    st.info("No weekday/weekend split data.")
+                else:
+                    st.dataframe(weekend_split, use_container_width=True, hide_index=True)
+            with mid_right:
+                st.markdown("### Transaction size distribution")
+                st.dataframe(size_distribution, use_container_width=True, hide_index=True)
+
+            st.markdown("### Category volatility")
+            if category_volatility_table.empty:
+                st.info("Not enough monthly category history for volatility analysis.")
+            else:
+                st.dataframe(category_volatility_table, use_container_width=True, hide_index=True)
         with tab_lab:
             _render_category_lab(enriched, lookup.get("categories", []))
         with tab_ai:

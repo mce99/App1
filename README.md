@@ -12,6 +12,7 @@ Now includes a modular finance workspace with:
 - Mapping memory persistence (rules + labels survive app restarts)
 - AI Coach (optional OpenAI API key, offline fallback if no key)
 - Savings simulator and month-over-month trend diagnostics in Plan & Improve
+- Deep Analytics tab (cashflow stability, run-rate projections, concentration, size bands, volatility)
 
 ## Run locally
 
