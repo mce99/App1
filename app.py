@@ -72,6 +72,7 @@ from market_data import (
     holdings_mix,
     portfolio_totals,
 )
+from local_sources import load_local_statement_uploads
 from mapping_rules import (
     apply_pattern_rules,
     learn_pattern_rules,
@@ -137,7 +138,7 @@ def _render_quick_start() -> None:
         st.markdown(
             "\n".join(
                 [
-                    "1. Upload your CSV/XLS/XLSX files in the sidebar.",
+                    "1. Upload files, or enable Local Sync folder in the sidebar.",
                     "2. Pick a timeframe and optional category filter.",
                     "3. Open `Plan & Improve` for concrete actions.",
                 ]
@@ -166,6 +167,12 @@ def _ensure_state_defaults() -> None:
         st.session_state["ai_brief_text"] = ""
     if "ai_brief_mode" not in st.session_state:
         st.session_state["ai_brief_mode"] = "offline"
+    if "local_sync_folder" not in st.session_state:
+        st.session_state["local_sync_folder"] = "~/Downloads/ubs_statements"
+    if "local_sync_recursive" not in st.session_state:
+        st.session_state["local_sync_recursive"] = False
+    if "use_local_sync_files" not in st.session_state:
+        st.session_state["use_local_sync_files"] = False
 
 
 def _apply_merchant_category_rules(df: pd.DataFrame) -> pd.DataFrame:
@@ -301,20 +308,47 @@ def _init_timeframe(df: pd.DataFrame) -> tuple[datetime.date, datetime.date]:
 def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None, dict[str, list[str]]]:
     _ensure_state_defaults()
     st.sidebar.header("1) Upload data")
-    uploaded_files = st.sidebar.file_uploader(
+    uploaded_files_raw = st.sidebar.file_uploader(
         "Upload statements",
         type=[ext.replace(".", "") for ext in SUPPORTED_EXTENSIONS],
         accept_multiple_files=True,
         help="CSV must be semicolon-delimited (;).",
     )
-    if not uploaded_files:
-        st.info("Upload one or more statement files from the sidebar to start.")
+    uploaded_files = list(uploaded_files_raw or [])
+
+    local_files = []
+    with st.sidebar.expander("Local sync folder (optional)", expanded=False):
+        st.checkbox(
+            "Include files from local folder",
+            key="use_local_sync_files",
+            help="When enabled, files from this folder are loaded on each rerun.",
+        )
+        st.text_input("Folder path", key="local_sync_folder")
+        st.checkbox("Scan subfolders", key="local_sync_recursive")
+        max_local_files = int(
+            st.number_input("Max local files", min_value=10, max_value=1000, value=250, step=10)
+        )
+        if st.session_state["use_local_sync_files"]:
+            try:
+                local_files = load_local_statement_uploads(
+                    folder_path=st.session_state["local_sync_folder"],
+                    recursive=bool(st.session_state["local_sync_recursive"]),
+                    supported_extensions=SUPPORTED_EXTENSIONS,
+                    max_files=max_local_files,
+                )
+                st.caption(f"Found {len(local_files)} local statement file(s).")
+            except Exception as exc:
+                st.warning(f"Local folder read failed: {exc}")
+
+    all_files = uploaded_files + local_files
+    if not all_files:
+        st.info("Upload files or enable local sync folder to start.")
         return None, None, {}
 
     drop_duplicates = st.sidebar.checkbox("Auto-remove duplicates across files", value=True)
 
     try:
-        df = merge_transactions(uploaded_files, drop_duplicates=drop_duplicates)
+        df = merge_transactions(all_files, drop_duplicates=drop_duplicates)
     except Exception as exc:
         st.error(f"Could not read file(s): {exc}")
         return None, None, {}
@@ -363,7 +397,8 @@ def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None, 
     source_context = _build_statement_context(enriched)
 
     st.sidebar.success(
-        f"Loaded {len(enriched):,} rows from {len(uploaded_files)} file(s).\n"
+        f"Loaded {len(enriched):,} rows from {len(all_files)} file(s).\n"
+        f"Uploads: {len(uploaded_files)} | Local sync: {len(local_files)}\n"
         f"{enriched['Date'].min().date()} -> {enriched['Date'].max().date()}"
     )
 
@@ -790,6 +825,35 @@ def _render_ai_coach(
         st.markdown(st.session_state["ai_brief_text"])
 
 
+def _render_bank_sync() -> None:
+    _ensure_state_defaults()
+    st.header("Bank Sync (UBS)")
+    st.caption("Manual login + MFA in browser, automatic statement download capture to a local folder.")
+
+    st.markdown("### 1) Configure local sync folder")
+    st.text_input("Sync folder path", key="local_sync_folder")
+    st.checkbox("Scan subfolders", key="local_sync_recursive")
+    st.checkbox("Include this folder in app ingestion", key="use_local_sync_files")
+
+    folder = str(st.session_state["local_sync_folder"])
+    st.markdown("### 2) Run guided sync script in terminal")
+    st.code(
+        (
+            f"cd \"/Users/mce/Documents/New project\"\n"
+            f".venv/bin/python ubs_browser_sync.py --download-dir \"{folder}\""
+        ),
+        language="bash",
+    )
+    st.caption(
+        "Open script -> login manually -> export statements -> press ENTER in terminal when done."
+    )
+
+    st.markdown("### 3) Analyze in app")
+    st.markdown(
+        "Go to `Overview` or `Mapping` workspace. New downloaded files are auto-loaded when local sync is enabled."
+    )
+
+
 def _default_stock_positions() -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -892,6 +956,7 @@ def main() -> None:
     _inject_styles()
     _render_header()
     _render_quick_start()
+    _ensure_state_defaults()
 
     page = st.sidebar.radio(
         "Workspace",
@@ -900,6 +965,7 @@ def main() -> None:
             "Money In/Out",
             "Plan & Improve",
             "Mapping",
+            "Bank Sync",
             "Data & QA",
             "Portfolio",
             "Guide",
@@ -911,6 +977,9 @@ def main() -> None:
         return
     if page == "Guide":
         render_metric_guide()
+        return
+    if page == "Bank Sync":
+        _render_bank_sync()
         return
 
     enriched, source_context, lookup = _prepare_enriched_data()

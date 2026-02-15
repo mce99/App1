@@ -10,6 +10,7 @@ Now includes a modular finance workspace with:
 - Category Lab for unlabeled transactions with merchant-rule learning
 - Mapping Studio page for manual mapping + smart token-rule learning
 - AI Coach (optional OpenAI API key, offline fallback if no key)
+- Bank Sync workspace for guided UBS browser download capture + local folder auto-ingest
 
 ## Run locally
 
@@ -23,6 +24,17 @@ CSV files are expected to be semicolon-delimited (`;`).
 You can also upload `.zip` bundles containing many CSV/XLS/XLSX statements.
 For UBS-style files with missing times, ordering now falls back to booking/value dates.
 The app is organized into simple workspaces: Overview, Money In/Out, Plan & Improve, Mapping, Data & QA, Portfolio, Guide.
+
+## UBS Browser Sync (local, guided)
+
+Run this locally to open UBS in a browser, log in manually, and capture downloaded statements into a sync folder:
+
+```bash
+cd "/Users/mce/Documents/New project"
+.venv/bin/python ubs_browser_sync.py --download-dir "~/Downloads/ubs_statements"
+```
+
+Then enable `Local sync folder` in the app sidebar (or `Bank Sync` workspace) to ingest those files automatically.
 
 ## Quality checks
 
