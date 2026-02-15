@@ -248,7 +248,15 @@ def _detect_header_row(preview: pd.DataFrame) -> int:
     best_score = -1
 
     for idx, row in preview.iterrows():
-        tokens = {_canonical_column_name(value) for value in row.tolist() if pd.notna(value)}
+        raw_values = [value for value in row.tolist() if pd.notna(value)]
+        expanded_values = []
+        for value in raw_values:
+            text = str(value)
+            if ";" in text and len(raw_values) == 1:
+                expanded_values.extend(text.split(";"))
+            else:
+                expanded_values.append(value)
+        tokens = {_canonical_column_name(value) for value in expanded_values if str(value).strip()}
         score = len(tokens & _EXPECTED_HEADER_COLUMNS)
         if score > best_score and "Abschlussdatum" in tokens:
             best_score = score
@@ -294,6 +302,35 @@ def _extract_statement_context(preview: pd.DataFrame) -> dict[str, Any]:
     return context
 
 
+def _read_csv_with_semicolon(data_text: str) -> pd.DataFrame:
+    """Read CSV rows expecting ';' delimiter with resilient fallback parsing."""
+    parsed = pd.read_csv(io.StringIO(data_text), sep=";", header=0, engine="python")
+    if parsed.shape[1] > 1:
+        return parsed
+
+    first_col = str(parsed.columns[0]) if len(parsed.columns) else ""
+    values = parsed.iloc[:, 0].astype(str).tolist() if not parsed.empty else []
+    if ";" not in first_col and not any(";" in value for value in values):
+        return parsed
+
+    reader = csv.reader(io.StringIO(data_text), delimiter=";", quotechar='"')
+    rows = list(reader)
+    if not rows:
+        return parsed
+    header = rows[0]
+    body = rows[1:]
+    if len(header) == 1 and ";" in str(header[0]):
+        header = str(header[0]).split(";")
+        body = [
+            str(row[0]).split(";") if row else []
+            for row in body
+        ]
+    max_cols = len(header)
+    normalized_rows = [row[:max_cols] for row in body]
+    padded = [row + [""] * (max_cols - len(row)) for row in normalized_rows]
+    return pd.DataFrame(padded, columns=header)
+
+
 def _load_raw_statement(uploaded_file: Any) -> tuple[pd.DataFrame, dict[str, Any]]:
     name = str(getattr(uploaded_file, "name", "")).lower()
     csv_text = _read_csv_text(uploaded_file) if name.endswith(".csv") else ""
@@ -315,9 +352,7 @@ def _load_raw_statement(uploaded_file: Any) -> tuple[pd.DataFrame, dict[str, Any
         if header_row >= len(lines):
             raise ValueError("Could not detect a valid transaction header row in CSV.")
         data_text = "\n".join(lines[header_row:])
-        return _normalize_headers(
-            pd.read_csv(io.StringIO(data_text), sep=";", header=0, engine="python")
-        ), context
+        return _normalize_headers(_read_csv_with_semicolon(data_text)), context
     raise ValueError(f"Unsupported file type: {name or '<unknown>'}. Supported: csv, xlsx, xls.")
 
 

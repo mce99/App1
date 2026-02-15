@@ -216,3 +216,17 @@ def test_merge_transactions_supports_zip_bundle() -> None:
     out = merge_transactions([zip_upload], drop_duplicates=True)
     assert len(out) == 2
     assert list(out["Merchant"]) == ["StoreA", "StoreB"]
+
+
+def test_load_transactions_splits_single_column_semicolon_payload() -> None:
+    csv_content = "\n".join(
+        [
+            '"Kontonummer:;0000000"',
+            '"Abschlussdatum;Abschlusszeit;Währung;Belastung;Gutschrift;Beschreibung1;Beschreibung2;Beschreibung3;Fussnoten"',
+            '"2026-02-01;06:30:00;CHF;-10;0;COOP;;;;"',
+        ]
+    )
+    out = load_transactions(DummyUpload("single_col.csv", csv_content))
+    assert len(out) == 1
+    assert out.loc[0, "Merchant"] == "COOP"
+    assert float(out.loc[0, "Debit"]) == 10.0
