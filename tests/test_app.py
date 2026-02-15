@@ -3,7 +3,7 @@ import zipfile
 
 import pandas as pd
 
-from categorization import assign_categories, enforce_flow_consistency
+from categorization import DEFAULT_KEYWORD_MAP, assign_categories, enforce_flow_consistency
 from parsing import classify_time_of_day, load_transactions, merge_transactions
 
 
@@ -323,3 +323,57 @@ def test_enforce_flow_consistency_corrects_obvious_mismatches() -> None:
     assert out.loc[1, "CategoryRule"] == "FlowCorrection:Incoming"
     # Transfer rows are intentionally exempt from flow correction.
     assert out.loc[2, "Category"] == "Income & Transfers"
+
+
+def test_assign_categories_uses_web_researched_merchant_hints() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "Beschreibung1": "AGROLA Tankstelle Regensdorf",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 60.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "Digitec Galaxus",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 200.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "Confiserie Honold AG",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 15.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "Metallum Metal Trading AG",
+                "Beschreibung2": "Payroll",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 0.0,
+                "Credit": 5000.0,
+            },
+            {
+                "Beschreibung1": "Barbezug mit PIN",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 100.0,
+                "Credit": 0.0,
+            },
+        ]
+    )
+
+    out = assign_categories(df, DEFAULT_KEYWORD_MAP)
+    assert out.loc[0, "Category"] == "Transport"
+    assert out.loc[1, "Category"] == "Shopping & Retail"
+    assert out.loc[2, "Category"] == "Food & Drink"
+    assert out.loc[3, "Category"] == "Income & Transfers"
+    assert out.loc[4, "Category"] == "Transfers"
