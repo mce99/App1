@@ -32,7 +32,36 @@ def calculate_kpis(df: pd.DataFrame) -> dict[str, float]:
     net_cashflow = total_earnings - total_spending
     tx_count = int(len(df))
     avg_spending = float(df["DebitCHF"].mean(skipna=True) if tx_count else 0.0)
+    avg_earning = float(df["CreditCHF"].mean(skipna=True) if tx_count else 0.0)
     savings_rate = float((net_cashflow / total_earnings * 100.0) if total_earnings else 0.0)
+    active_days = int(df["Date"].dropna().dt.date.nunique())
+    if active_days:
+        avg_spending_per_active_day = float(total_spending / active_days)
+        avg_earnings_per_active_day = float(total_earnings / active_days)
+        avg_transactions_per_active_day = float(tx_count / active_days)
+        avg_daily_net = float(net_cashflow / active_days)
+    else:
+        avg_spending_per_active_day = 0.0
+        avg_earnings_per_active_day = 0.0
+        avg_transactions_per_active_day = 0.0
+        avg_daily_net = 0.0
+
+    min_date = df["Date"].min()
+    max_date = df["Date"].max()
+    if pd.notna(min_date) and pd.notna(max_date):
+        calendar_days = int((max_date.normalize() - min_date.normalize()).days + 1)
+    else:
+        calendar_days = 0
+
+    if calendar_days:
+        avg_spending_per_calendar_day = float(total_spending / calendar_days)
+        avg_earnings_per_calendar_day = float(total_earnings / calendar_days)
+    else:
+        avg_spending_per_calendar_day = 0.0
+        avg_earnings_per_calendar_day = 0.0
+
+    largest_spending = float(df["DebitCHF"].max(skipna=True) if tx_count else 0.0)
+    largest_earning = float(df["CreditCHF"].max(skipna=True) if tx_count else 0.0)
 
     return {
         "total_spending": total_spending,
@@ -40,7 +69,18 @@ def calculate_kpis(df: pd.DataFrame) -> dict[str, float]:
         "net_cashflow": net_cashflow,
         "transactions": tx_count,
         "avg_spending": avg_spending,
+        "avg_earning": avg_earning,
         "savings_rate": savings_rate,
+        "active_days": active_days,
+        "calendar_days": calendar_days,
+        "avg_spending_per_active_day": avg_spending_per_active_day,
+        "avg_earnings_per_active_day": avg_earnings_per_active_day,
+        "avg_spending_per_calendar_day": avg_spending_per_calendar_day,
+        "avg_earnings_per_calendar_day": avg_earnings_per_calendar_day,
+        "avg_transactions_per_active_day": avg_transactions_per_active_day,
+        "avg_daily_net": avg_daily_net,
+        "largest_spending": largest_spending,
+        "largest_earning": largest_earning,
     }
 
 
@@ -65,9 +105,68 @@ def daily_net_cashflow(df: pd.DataFrame) -> pd.DataFrame:
         .sort_index()
     )
     daily["Net"] = daily["Earnings"] - daily["Spending"]
+    daily["CumulativeSpending"] = daily["Spending"].cumsum()
+    daily["CumulativeEarnings"] = daily["Earnings"].cumsum()
     daily["CumulativeNet"] = daily["Net"].cumsum()
     daily.index = pd.to_datetime(daily.index)
     return daily
+
+
+def weekday_average_cashflow(df: pd.DataFrame) -> pd.DataFrame:
+    """Average spending/earnings/net by weekday."""
+    daily = daily_net_cashflow(df).copy()
+    if daily.empty:
+        return pd.DataFrame(columns=["Spending", "Earnings", "Net"])
+
+    daily["Weekday"] = daily.index.day_name()
+    order = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
+    grouped = daily.groupby("Weekday")[["Spending", "Earnings", "Net"]].mean()
+    grouped = grouped.reindex(order).fillna(0.0)
+    return grouped
+
+
+def hourly_spending_profile(df: pd.DataFrame) -> pd.DataFrame:
+    """Spending/earnings totals and averages by hour of day."""
+    out = df.copy()
+    hour_from_time = (
+        out["Time"]
+        .astype(str)
+        .str.strip()
+        .str.split(".")
+        .str[0]
+        .str.extract(r"^(\d{1,2})")[0]
+    )
+    out["Hour"] = pd.to_numeric(hour_from_time, errors="coerce")
+    if "SortDateTime" in out.columns:
+        out["Hour"] = out["Hour"].fillna(out["SortDateTime"].dt.hour)
+
+    out = out[out["Hour"].notna()].copy()
+    out["Hour"] = out["Hour"].astype(int)
+    if out.empty:
+        return pd.DataFrame(
+            0.0,
+            index=range(24),
+            columns=["Spending", "Earnings", "Net", "AvgSpending", "AvgEarnings", "Transactions"],
+        )
+
+    grouped = out.groupby("Hour").agg(
+        Spending=("DebitCHF", "sum"),
+        Earnings=("CreditCHF", "sum"),
+        AvgSpending=("DebitCHF", "mean"),
+        AvgEarnings=("CreditCHF", "mean"),
+        Transactions=("Hour", "size"),
+    )
+    grouped["Net"] = grouped["Earnings"] - grouped["Spending"]
+    grouped = grouped.reindex(range(24)).fillna(0.0)
+    return grouped
 
 
 def merchant_summary(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:

@@ -14,9 +14,11 @@ from analytics import (
     calculate_kpis,
     daily_net_cashflow,
     filter_by_date_range,
+    hourly_spending_profile,
     merchant_summary,
     monthly_cashflow,
     recurring_transaction_candidates,
+    weekday_average_cashflow,
 )
 from categorization import DEFAULT_KEYWORD_MAP, assign_categories
 from parsing import SUPPORTED_EXTENSIONS, classify_time_of_day, merge_transactions
@@ -286,16 +288,34 @@ def main() -> None:
     kpis = calculate_kpis(filtered)
 
     st.subheader("Comprehensive overview")
-    kpi_cols = st.columns(6)
-    kpi_cols[0].metric("Spending (CHF)", f"{kpis['total_spending']:,.2f}")
-    kpi_cols[1].metric("Earnings (CHF)", f"{kpis['total_earnings']:,.2f}")
-    kpi_cols[2].metric("Net cashflow", f"{kpis['net_cashflow']:,.2f}")
-    kpi_cols[3].metric("Transactions", f"{kpis['transactions']:,}")
-    kpi_cols[4].metric("Avg spend / tx", f"{kpis['avg_spending']:,.2f}")
-    kpi_cols[5].metric("Savings rate", f"{kpis['savings_rate']:.1f}%")
+    kpi_row_1 = st.columns(4)
+    kpi_row_1[0].metric("Spending (CHF)", f"{kpis['total_spending']:,.2f}")
+    kpi_row_1[1].metric("Earnings (CHF)", f"{kpis['total_earnings']:,.2f}")
+    kpi_row_1[2].metric("Net cashflow", f"{kpis['net_cashflow']:,.2f}")
+    kpi_row_1[3].metric("Savings rate", f"{kpis['savings_rate']:.1f}%")
+
+    kpi_row_2 = st.columns(4)
+    kpi_row_2[0].metric("Transactions", f"{kpis['transactions']:,}")
+    kpi_row_2[1].metric("Active days", f"{kpis['active_days']:,}")
+    kpi_row_2[2].metric("Avg spend / tx", f"{kpis['avg_spending']:,.2f}")
+    kpi_row_2[3].metric("Avg earning / tx", f"{kpis['avg_earning']:,.2f}")
+
+    kpi_row_3 = st.columns(4)
+    kpi_row_3[0].metric("Avg spend / active day", f"{kpis['avg_spending_per_active_day']:,.2f}")
+    kpi_row_3[1].metric("Avg earn / active day", f"{kpis['avg_earnings_per_active_day']:,.2f}")
+    kpi_row_3[2].metric("Avg tx / active day", f"{kpis['avg_transactions_per_active_day']:,.2f}")
+    kpi_row_3[3].metric("Avg daily net", f"{kpis['avg_daily_net']:,.2f}")
+
+    kpi_row_4 = st.columns(4)
+    kpi_row_4[0].metric("Avg spend / calendar day", f"{kpis['avg_spending_per_calendar_day']:,.2f}")
+    kpi_row_4[1].metric("Avg earn / calendar day", f"{kpis['avg_earnings_per_calendar_day']:,.2f}")
+    kpi_row_4[2].metric("Largest spend tx", f"{kpis['largest_spending']:,.2f}")
+    kpi_row_4[3].metric("Largest earning tx", f"{kpis['largest_earning']:,.2f}")
 
     monthly = monthly_cashflow(filtered)
     daily = daily_net_cashflow(filtered)
+    hourly = hourly_spending_profile(filtered)
+    weekday_avg = weekday_average_cashflow(filtered)
     top_merchants = merchant_summary(filtered, top_n=20)
     recurring = recurring_transaction_candidates(filtered)
 
@@ -304,12 +324,29 @@ def main() -> None:
     )
 
     with tab_overview:
+        st.markdown("### Cumulative views")
+        st.line_chart(daily[["CumulativeEarnings", "CumulativeSpending", "CumulativeNet"]])
+
         st.markdown("### Cashflow trends")
         st.area_chart(monthly[["Earnings", "Spending"]])
         st.bar_chart(monthly[["Net"]])
 
-        st.markdown("### Daily net and cumulative net")
+        st.markdown("### Daily net")
         st.line_chart(daily[["Net", "CumulativeNet"]])
+
+        st.markdown("### Average by weekday")
+        weekday_left, weekday_right = st.columns(2)
+        with weekday_left:
+            st.bar_chart(weekday_avg[["Spending", "Earnings"]])
+        with weekday_right:
+            st.bar_chart(weekday_avg[["Net"]])
+
+        st.markdown("### Spend by hour of day")
+        hour_left, hour_right = st.columns(2)
+        with hour_left:
+            st.bar_chart(hourly[["Spending", "Earnings"]])
+        with hour_right:
+            st.line_chart(hourly[["AvgSpending", "AvgEarnings"]])
 
         st.markdown("### Time-of-day activity")
         st.bar_chart(filtered["TimeOfDay"].value_counts().sort_index())
