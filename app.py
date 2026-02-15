@@ -5,10 +5,12 @@ from __future__ import annotations
 import datetime
 import io
 import json
+import os
 
 import pandas as pd
 import streamlit as st
 
+from ai_assistant import generate_ai_brief
 from analytics import (
     account_summary,
     apply_category_overrides,
@@ -115,11 +117,24 @@ def _render_header() -> None:
         """
         <div class="hero">
           <h1>PulseLedger</h1>
-          <p>Modular transaction intelligence with transfer/account tracking, forecasting, anomalies, and rule review.</p>
+          <p>Simple money clarity: upload statements, choose timeframe, see where your money goes.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _render_quick_start() -> None:
+    with st.expander("How to use this app (30 seconds)", expanded=False):
+        st.markdown(
+            "\n".join(
+                [
+                    "1. Upload your CSV/XLS/XLSX files in the sidebar.",
+                    "2. Pick a timeframe and optional category filter.",
+                    "3. Open `Plan & Improve` for concrete actions.",
+                ]
+            )
+        )
 
 
 def _parse_json_dict(json_text: str, fallback: dict) -> dict:
@@ -130,6 +145,34 @@ def _parse_json_dict(json_text: str, fallback: dict) -> dict:
         return parsed
     except Exception:
         return fallback
+
+
+def _ensure_state_defaults() -> None:
+    if "category_overrides" not in st.session_state:
+        st.session_state["category_overrides"] = {}
+    if "merchant_category_rules" not in st.session_state:
+        st.session_state["merchant_category_rules"] = {}
+    if "ai_brief_text" not in st.session_state:
+        st.session_state["ai_brief_text"] = ""
+    if "ai_brief_mode" not in st.session_state:
+        st.session_state["ai_brief_mode"] = "offline"
+
+
+def _apply_merchant_category_rules(df: pd.DataFrame) -> pd.DataFrame:
+    rules = st.session_state.get("merchant_category_rules", {})
+    if not rules:
+        return df
+
+    out = df.copy()
+    merchant_norm = out.get("MerchantNormalized", pd.Series([""] * len(out))).astype(str).str.upper().str.strip()
+    normalized_rules = {str(k).upper().strip(): str(v) for k, v in rules.items() if str(k).strip()}
+    mapped = merchant_norm.map(normalized_rules)
+    mask = mapped.notna()
+    if mask.any():
+        out.loc[mask, "Category"] = mapped.loc[mask]
+        out.loc[mask, "CategoryConfidence"] = 0.99
+        out.loc[mask, "CategoryRule"] = "MerchantRule"
+    return out
 
 
 def _add_manual_transaction(df: pd.DataFrame) -> pd.DataFrame:
@@ -242,7 +285,8 @@ def _init_timeframe(df: pd.DataFrame) -> tuple[datetime.date, datetime.date]:
 
 
 def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None, dict[str, list[str]]]:
-    st.sidebar.header("Data Setup")
+    _ensure_state_defaults()
+    st.sidebar.header("1) Upload data")
     uploaded_files = st.sidebar.file_uploader(
         "Upload statements",
         type=[ext.replace(".", "") for ext in SUPPORTED_EXTENSIONS],
@@ -294,12 +338,11 @@ def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None, 
     enriched = apply_currency_conversion(df, conv_rates)
     enriched = assign_categories_with_confidence(enriched, keyword_map)
     enriched = enrich_transaction_intelligence(enriched)
+    enriched = _apply_merchant_category_rules(enriched)
 
     # Force transfer category where confidence is high.
     enriched.loc[(enriched["IsTransfer"]) & (enriched["TransferConfidence"] >= 0.7), "Category"] = "Transfers"
 
-    if "category_overrides" not in st.session_state:
-        st.session_state["category_overrides"] = {}
     enriched = apply_category_overrides(enriched, st.session_state["category_overrides"])
 
     source_context = _build_statement_context(enriched)
@@ -313,23 +356,25 @@ def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None, 
 
 
 def _apply_filters(enriched: pd.DataFrame) -> pd.DataFrame:
-    st.sidebar.header("Filters")
+    st.sidebar.header("2) Filters")
     start_date, end_date = _init_timeframe(enriched)
-
-    source_options = sorted(enriched["SourceFile"].dropna().unique().tolist())
-    selected_sources = st.sidebar.multiselect("Source files", source_options, default=source_options)
-
-    account_options = sorted(enriched["SourceAccount"].dropna().unique().tolist())
-    selected_accounts = st.sidebar.multiselect("Accounts", account_options, default=account_options)
 
     category_options = sorted(enriched["Category"].dropna().unique().tolist())
     selected_categories = st.sidebar.multiselect("Categories", category_options, default=category_options)
-
-    merchant_query = st.sidebar.text_input("Merchant contains", value="").strip().lower()
-    include_transfers = st.sidebar.checkbox("Include transfer transactions", value=True)
+    merchant_query = st.sidebar.text_input("Quick merchant search", value="").strip().lower()
+    include_transfers = st.sidebar.checkbox("Include transfer transactions", value=False)
 
     max_amount = float(enriched[["DebitCHF", "CreditCHF"]].fillna(0).max().max())
-    min_amount = st.sidebar.slider("Minimum abs amount (CHF)", 0.0, max(1.0, max_amount), 0.0)
+    min_amount = 0.0
+
+    source_options = sorted(enriched["SourceFile"].dropna().unique().tolist())
+    selected_sources = source_options
+    account_options = sorted(enriched["SourceAccount"].dropna().unique().tolist())
+    selected_accounts = account_options
+    with st.sidebar.expander("Advanced filters", expanded=False):
+        selected_sources = st.multiselect("Source files", source_options, default=source_options)
+        selected_accounts = st.multiselect("Accounts", account_options, default=account_options)
+        min_amount = st.slider("Minimum abs amount (CHF)", 0.0, max(1.0, max_amount), 0.0)
 
     filtered = filter_by_date_range(enriched, start_date, end_date)
     filtered = filtered[filtered["SourceFile"].isin(selected_sources)]
@@ -396,6 +441,147 @@ def _render_review_queue(enriched: pd.DataFrame, category_options: list[str]) ->
                 st.session_state["category_overrides"][str(row["TransactionId"])] = str(row["ReviewedCategory"])
             st.success(f"Applied {len(updates)} category override(s).")
             st.rerun()
+
+
+def _render_category_lab(enriched: pd.DataFrame, category_options: list[str]) -> None:
+    st.header("Category Lab")
+    st.caption("Label uncategorized or low-confidence transactions and optionally learn merchant rules.")
+
+    confidence_cutoff = st.slider("Confidence cutoff", 0.1, 0.95, 0.65, 0.05, key="cat_lab_cutoff")
+
+    base = enriched.copy()
+    candidates = base[
+        (base["Category"].fillna("Other") == "Other")
+        | (base["CategoryConfidence"].fillna(0.0) < confidence_cutoff)
+    ].copy()
+
+    if candidates.empty:
+        st.success("No unlabeled transactions for the selected data.")
+        return
+
+    confident = base[
+        (base["Category"].fillna("") != "Other")
+        & (base["CategoryConfidence"].fillna(0.0) >= 0.85)
+        & (base["MerchantNormalized"].fillna("").astype(str).str.strip() != "")
+    ]
+    merchant_suggestion = (
+        confident.groupby("MerchantNormalized")["Category"]
+        .agg(lambda s: s.value_counts().index[0])
+        .to_dict()
+    )
+
+    candidates["SuggestedCategory"] = candidates["MerchantNormalized"].map(merchant_suggestion)
+    transfer_mask = (candidates["IsTransfer"]) & (candidates["TransferConfidence"] >= 0.7)
+    candidates.loc[transfer_mask, "SuggestedCategory"] = "Transfers"
+    candidates["SuggestedCategory"] = candidates["SuggestedCategory"].fillna("Other")
+    candidates["FinalCategory"] = candidates["SuggestedCategory"]
+    candidates["ApplyToMerchant"] = False
+
+    show_cols = [
+        "TransactionId",
+        "Date",
+        "Time",
+        "Merchant",
+        "MerchantNormalized",
+        "DebitCHF",
+        "CreditCHF",
+        "Category",
+        "CategoryConfidence",
+        "SuggestedCategory",
+        "FinalCategory",
+        "ApplyToMerchant",
+    ]
+    editor = st.data_editor(
+        candidates[show_cols],
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "FinalCategory": st.column_config.SelectboxColumn(
+                "Final category", options=sorted(set(category_options + ["Other", "Transfers"]))
+            ),
+            "ApplyToMerchant": st.column_config.CheckboxColumn("Learn merchant rule"),
+        },
+        key="category_lab_editor",
+    )
+
+    left, right = st.columns(2)
+    with left:
+        if st.button("Apply labels", key="category_lab_apply"):
+            changed = editor[editor["FinalCategory"] != editor["Category"]]
+            learned = editor[(editor["ApplyToMerchant"]) & (editor["FinalCategory"].fillna("") != "")]
+
+            for _, row in changed.iterrows():
+                st.session_state["category_overrides"][str(row["TransactionId"])] = str(row["FinalCategory"])
+
+            learned_count = 0
+            for _, row in learned.iterrows():
+                merchant_key = str(row.get("MerchantNormalized", "")).upper().strip()
+                if merchant_key:
+                    st.session_state["merchant_category_rules"][merchant_key] = str(row["FinalCategory"])
+                    learned_count += 1
+
+            st.success(
+                f"Applied {len(changed)} transaction labels and learned {learned_count} merchant rule(s)."
+            )
+            st.rerun()
+
+    with right:
+        if st.button("Clear merchant rules", key="category_lab_clear_rules"):
+            st.session_state["merchant_category_rules"] = {}
+            st.info("Merchant rules cleared.")
+            st.rerun()
+
+    with st.expander("Current merchant rules", expanded=False):
+        rule_items = [
+            {"MerchantNormalized": key, "Category": value}
+            for key, value in sorted(st.session_state["merchant_category_rules"].items())
+        ]
+        if not rule_items:
+            st.caption("No merchant rules yet.")
+        else:
+            st.dataframe(pd.DataFrame(rule_items), use_container_width=True, hide_index=True)
+
+
+def _render_ai_coach(
+    kpis: dict[str, float],
+    benchmark_table: pd.DataFrame,
+    recommendations: pd.DataFrame,
+    merchant_table: pd.DataFrame,
+    anomalies: pd.DataFrame,
+    recurring: pd.DataFrame,
+    action_plan: pd.DataFrame,
+) -> None:
+    st.header("AI Coach")
+    st.caption("Get a personalized analysis summary and prioritized money actions.")
+
+    goal = st.text_input("Goal for next month", value="Increase savings by CHF 1,000")
+    model = st.selectbox("AI model", ["gpt-4.1-mini", "gpt-4o-mini"], index=0)
+    key_default = os.getenv("OPENAI_API_KEY", "")
+    api_key = st.text_input("OpenAI API key (optional)", value=key_default, type="password")
+
+    if st.button("Generate AI analysis", key="ai_generate"):
+        mode, text = generate_ai_brief(
+            kpis=kpis,
+            benchmark_table=benchmark_table,
+            recommendations=recommendations,
+            merchant_table=merchant_table,
+            anomalies=anomalies,
+            recurring=recurring,
+            action_plan=action_plan,
+            user_goal=goal,
+            api_key=api_key,
+            model=model,
+        )
+        st.session_state["ai_brief_mode"] = mode
+        st.session_state["ai_brief_text"] = text
+
+    if st.session_state.get("ai_brief_text", "").strip():
+        mode = st.session_state.get("ai_brief_mode", "offline")
+        if mode == "online":
+            st.success("Generated with live AI model.")
+        else:
+            st.info("Generated using offline fallback logic. Add API key for live AI output.")
+        st.markdown(st.session_state["ai_brief_text"])
 
 
 def _default_stock_positions() -> pd.DataFrame:
@@ -499,42 +685,29 @@ def _render_portfolio_page() -> None:
 def main() -> None:
     _inject_styles()
     _render_header()
+    _render_quick_start()
 
     page = st.sidebar.radio(
-        "Navigate",
+        "Workspace",
         [
-            "Agent Console",
-            "Home",
+            "Overview",
+            "Money In/Out",
+            "Plan & Improve",
+            "Data & QA",
             "Portfolio",
-            "Insights & Optimization",
-            "Spending Map",
-            "Cashflow",
-            "Spending",
-            "Earnings",
-            "Behavior",
-            "Accounts",
-            "Forecast",
-            "Anomalies",
-            "Review Queue",
-            "Plans & Recurring",
-            "Data Explorer",
-            "Data Health",
-            "Metric Guide",
-            "Report Pack",
+            "Guide",
         ],
     )
 
     if page == "Portfolio":
         _render_portfolio_page()
         return
+    if page == "Guide":
+        render_metric_guide()
+        return
 
     enriched, source_context, lookup = _prepare_enriched_data()
     if enriched is None or source_context is None:
-        return
-
-    # Review queue should be available on full enriched set.
-    if page == "Review Queue":
-        _render_review_queue(enriched, lookup.get("categories", []))
         return
 
     filtered = _apply_filters(enriched)
@@ -625,50 +798,84 @@ def main() -> None:
         recurring=recurring,
     )
 
-    with st.sidebar.expander("Map settings", expanded=False):
-        min_spending_for_map = st.slider("Min spending per point (CHF)", 0.0, 500.0, 20.0, key="map_min_spending")
-
-    map_cols = [col for col in ["Date", "Location", "DebitCHF", "Merchant", "Category", "SourceAccount"] if col in filtered.columns]
-    map_payload = filtered[map_cols].fillna("").to_json(orient="records", date_format="iso")
-    map_points = _cached_spending_map_points(map_payload, float(min_spending_for_map))
-
-    forecast = forecast_cashflow(filtered, recurring)
-
-    summary_md, report_zip = build_report_pack(filtered, kpis, monthly)
-
-    if page == "Agent Console":
-        render_agent_console(action_plan, ingestion_quality)
-    elif page == "Home":
+    if page == "Overview":
         render_home(kpis, daily, monthly, category_table, quality)
-    elif page == "Insights & Optimization":
-        render_insights(salary_info, benchmark_table, recommendations, merchant_table, balance_table)
-    elif page == "Spending Map":
-        render_spending_map(map_points)
-    elif page == "Cashflow":
-        render_cashflow(daily, monthly, velocity)
-    elif page == "Spending":
-        render_spending(category_table, top_merchants, hourly, weekday_avg)
-    elif page == "Earnings":
-        render_earnings(category_table, income_sources, hourly, weekday_avg)
-    elif page == "Behavior":
-        render_behavior(hourly, weekday_avg, filtered)
-    elif page == "Accounts":
+        st.markdown("### What to do next")
+        st.dataframe(action_plan.head(6), use_container_width=True, hide_index=True)
+    elif page == "Money In/Out":
+        tab_cash, tab_spend, tab_earn, tab_map = st.tabs(
+            ["Cashflow", "Spending", "Earnings", "Spending map"]
+        )
+        with tab_cash:
+            render_cashflow(daily, monthly, velocity)
+        with tab_spend:
+            render_spending(category_table, top_merchants, hourly, weekday_avg)
+            st.markdown("### Behavior timing")
+            render_behavior(hourly, weekday_avg, filtered)
+        with tab_earn:
+            render_earnings(category_table, income_sources, hourly, weekday_avg)
+        with tab_map:
+            with st.sidebar.expander("Map settings", expanded=False):
+                min_spending_for_map = st.slider(
+                    "Min spending per point (CHF)", 0.0, 500.0, 20.0, key="map_min_spending"
+                )
+            map_cols = [
+                col
+                for col in ["Date", "Location", "DebitCHF", "Merchant", "Category", "SourceAccount"]
+                if col in filtered.columns
+            ]
+            map_payload = filtered[map_cols].fillna("").to_json(orient="records", date_format="iso")
+            map_points = _cached_spending_map_points(map_payload, float(min_spending_for_map))
+            render_spending_map(map_points)
+    elif page == "Plan & Improve":
+        forecast = forecast_cashflow(filtered, recurring)
+        tab_actions, tab_insights, tab_lab, tab_ai, tab_anom, tab_forecast, tab_plans = st.tabs(
+            [
+                "Action queue",
+                "Insights",
+                "Category Lab",
+                "AI Coach",
+                "Anomalies",
+                "Forecast",
+                "Plans",
+            ]
+        )
+        with tab_actions:
+            render_agent_console(action_plan, ingestion_quality)
+        with tab_insights:
+            render_insights(salary_info, benchmark_table, recommendations, merchant_table, balance_table)
+        with tab_lab:
+            _render_category_lab(enriched, lookup.get("categories", []))
+        with tab_ai:
+            _render_ai_coach(
+                kpis=kpis,
+                benchmark_table=benchmark_table,
+                recommendations=recommendations,
+                merchant_table=merchant_table,
+                anomalies=anomalies,
+                recurring=recurring,
+                action_plan=action_plan,
+            )
+        with tab_anom:
+            render_anomalies(anomalies, dupes)
+        with tab_forecast:
+            render_forecast(forecast)
+        with tab_plans:
+            render_subscriptions(recurring, budget_table, goals_table)
+    elif page == "Data & QA":
+        summary_md, report_zip = build_report_pack(filtered, kpis, monthly)
         transfers = filtered[filtered["IsTransfer"]].copy()
-        render_accounts(accounts, transfers)
-    elif page == "Forecast":
-        render_forecast(forecast)
-    elif page == "Anomalies":
-        render_anomalies(anomalies, dupes)
-    elif page == "Plans & Recurring":
-        render_subscriptions(recurring, budget_table, goals_table)
-    elif page == "Data Explorer":
-        render_data_explorer(filtered, source_context)
-    elif page == "Data Health":
-        render_data_health(health_table, quality)
-    elif page == "Metric Guide":
-        render_metric_guide()
-    elif page == "Report Pack":
-        render_report_pack(summary_md, report_zip)
+        tab_explorer, tab_health, tab_accounts, tab_reports = st.tabs(
+            ["Explorer", "Health", "Accounts", "Reports"]
+        )
+        with tab_explorer:
+            render_data_explorer(filtered, source_context)
+        with tab_health:
+            render_data_health(health_table, quality)
+        with tab_accounts:
+            render_accounts(accounts, transfers)
+        with tab_reports:
+            render_report_pack(summary_md, report_zip)
 
 
 if __name__ == "__main__":
