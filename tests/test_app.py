@@ -1,4 +1,5 @@
 import io
+import zipfile
 
 import pandas as pd
 
@@ -9,6 +10,12 @@ from parsing import classify_time_of_day, load_transactions, merge_transactions
 class DummyUpload(io.BytesIO):
     def __init__(self, name: str, content: str) -> None:
         super().__init__(content.encode("utf-8"))
+        self.name = name
+
+
+class DummyUploadBytes(io.BytesIO):
+    def __init__(self, name: str, content: bytes) -> None:
+        super().__init__(content)
         self.name = name
 
 
@@ -166,3 +173,30 @@ def test_load_transactions_maps_english_ubs_headers() -> None:
     assert out.loc[0, "StatementCurrency"] == "CHF"
     assert out.loc[0, "Belastung"] == -137.0
     assert out.loc[0, "Transaktions-Nr."] == "4825794DP1572581029"
+
+
+def test_merge_transactions_supports_zip_bundle() -> None:
+    csv_content = "\n".join(
+        [
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "h7",
+            "h8",
+            "Abschlussdatum;Abschlusszeit;Währung;Belastung;Gutschrift;Beschreibung1;Beschreibung2;Beschreibung3;Fussnoten",
+            "2026-02-03;09:00:00;CHF;-7;0;StoreA;;;",
+            "2026-02-04;09:00:00;CHF;-8;0;StoreB;;;",
+        ]
+    ).encode("utf-8")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("batch_1.csv", csv_content)
+    zip_upload = DummyUploadBytes("history.zip", zip_buffer.getvalue())
+
+    out = merge_transactions([zip_upload], drop_duplicates=True)
+    assert len(out) == 2
+    assert list(out["Merchant"]) == ["StoreA", "StoreB"]

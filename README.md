@@ -2,6 +2,10 @@
 
 Streamlit app for parsing bank transaction exports and summarizing spending/income by category.
 Supports multi-file upload (`.csv`, `.xlsx`, `.xls`) so you can combine batched exports.
+Now includes a modular finance workspace with:
+- transaction intelligence (forecasts, anomalies, recurring detection, transfer/account tracking)
+- stock positions (symbol, quantity, average buy price)
+- crypto wallet lookups for BTC / ETH / SOL addresses
 
 ## Run locally
 
@@ -12,6 +16,7 @@ python3 -m venv .venv
 ```
 
 CSV files are expected to be semicolon-delimited (`;`).
+You can also upload `.zip` bundles containing many CSV/XLS/XLSX statements.
 
 ## Quality checks
 

@@ -4,11 +4,12 @@ import csv
 import datetime
 import hashlib
 import io
+import zipfile
 from typing import Any
 
 import pandas as pd
 
-SUPPORTED_EXTENSIONS = (".csv", ".xlsx", ".xls")
+SUPPORTED_EXTENSIONS = (".csv", ".xlsx", ".xls", ".zip")
 _DEFAULT_HEADER_ROW = 9
 _EXPECTED_HEADER_COLUMNS = {
     "Abschlussdatum",
@@ -117,6 +118,44 @@ def _rewind(uploaded_file: Any) -> None:
         uploaded_file.seek(0)
     except Exception:
         return
+
+
+class _NamedBytesIO(io.BytesIO):
+    def __init__(self, data: bytes, name: str) -> None:
+        super().__init__(data)
+        self.name = name
+
+
+def _read_file_bytes(uploaded_file: Any) -> bytes:
+    _rewind(uploaded_file)
+    raw = uploaded_file.read()
+    if isinstance(raw, bytes):
+        data = raw
+    else:
+        data = str(raw).encode("utf-8", errors="ignore")
+    _rewind(uploaded_file)
+    return data
+
+
+def _iter_statement_files(uploaded_file: Any):
+    """Yield one or more file-like statement objects from input upload.
+
+    Supports direct csv/xlsx/xls uploads and .zip bundles containing those files.
+    """
+    file_name = str(getattr(uploaded_file, "name", "")).lower()
+    if not file_name.endswith(".zip"):
+        yield uploaded_file
+        return
+
+    payload = _read_file_bytes(uploaded_file)
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            entry_name = str(info.filename).split("/")[-1]
+            entry_lower = entry_name.lower()
+            if entry_lower.endswith(".csv") or entry_lower.endswith(".xlsx") or entry_lower.endswith(".xls"):
+                yield _NamedBytesIO(archive.read(info.filename), entry_name)
 
 
 def _normalize_label(value: Any) -> str:
@@ -395,7 +434,10 @@ def deduplicate_transactions(df: pd.DataFrame) -> pd.DataFrame:
 
 def merge_transactions(uploaded_files: list[Any], drop_duplicates: bool = True) -> pd.DataFrame:
     """Load, combine, deduplicate and sort multiple statements."""
-    frames = [load_transactions(uploaded_file) for uploaded_file in uploaded_files]
+    frames = []
+    for uploaded_file in uploaded_files:
+        for statement_file in _iter_statement_files(uploaded_file):
+            frames.append(load_transactions(statement_file))
     if not frames:
         return pd.DataFrame()
 

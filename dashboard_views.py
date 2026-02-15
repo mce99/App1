@@ -311,3 +311,40 @@ def render_report_pack(summary_md: str, zip_bytes: bytes) -> None:
         file_name="pulseledger_report_pack.zip",
         mime="application/zip",
     )
+
+
+def render_portfolio(
+    stock_positions: pd.DataFrame,
+    wallet_positions: pd.DataFrame,
+    totals: dict[str, float],
+    holdings: pd.DataFrame,
+    quote_currency: str,
+) -> None:
+    st.header("Portfolio")
+    st.caption("Stocks + on-chain wallet balances in one place.")
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Stock value", f"{totals['stock_value']:,.2f}")
+    k2.metric("Wallet value", f"{totals['wallet_value']:,.2f} {quote_currency.upper()}")
+    k3.metric("Total tracked value", f"{totals['total_value']:,.2f}")
+    k4.metric("Known unrealized PnL", f"{totals['total_pnl_known']:,.2f}")
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("### Stock positions")
+        if stock_positions.empty:
+            st.info("No stock positions yet.")
+        else:
+            st.dataframe(stock_positions, use_container_width=True)
+    with right:
+        st.markdown("### Wallet balances")
+        if wallet_positions.empty:
+            st.info("No wallet balances yet.")
+        else:
+            st.dataframe(wallet_positions, use_container_width=True)
+
+    st.markdown("### Holdings mix")
+    if holdings.empty:
+        st.info("No holdings data to chart.")
+    else:
+        st.bar_chart(holdings.set_index("Label")[["Value"]])

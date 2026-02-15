@@ -46,9 +46,17 @@ from dashboard_views import (
     render_forecast,
     render_home,
     render_metric_guide,
+    render_portfolio,
     render_report_pack,
     render_spending,
     render_subscriptions,
+)
+from market_data import (
+    evaluate_stock_positions,
+    fetch_stock_quotes,
+    fetch_wallet_balances,
+    holdings_mix,
+    portfolio_totals,
 )
 from parsing import SUPPORTED_EXTENSIONS, classify_time_of_day, merge_transactions
 
@@ -378,6 +386,98 @@ def _render_review_queue(enriched: pd.DataFrame, category_options: list[str]) ->
             st.rerun()
 
 
+def _default_stock_positions() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"Symbol": "AAPL", "Quantity": 0.0, "AvgBuyPrice": 0.0},
+            {"Symbol": "MSFT", "Quantity": 0.0, "AvgBuyPrice": 0.0},
+        ]
+    )
+
+
+def _default_wallets() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"Label": "Main BTC", "Address": "", "Chain": "BTC"},
+            {"Label": "Main ETH", "Address": "", "Chain": "ETH"},
+            {"Label": "Main SOL", "Address": "", "Chain": "SOL"},
+        ]
+    )
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_stock_quotes(symbols: tuple[str, ...]) -> pd.DataFrame:
+    return fetch_stock_quotes(list(symbols))
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def _cached_wallet_balances(wallets_json: str, quote_currency: str) -> pd.DataFrame:
+    wallets = pd.read_json(wallets_json, orient="records")
+    return fetch_wallet_balances(wallets, quote_currency=quote_currency)
+
+
+def _render_portfolio_page() -> None:
+    st.header("Portfolio Setup")
+    st.caption(
+        "Add stock positions and crypto wallet addresses. Balances/prices are fetched automatically."
+    )
+
+    if "stock_positions" not in st.session_state:
+        st.session_state["stock_positions"] = _default_stock_positions()
+    if "wallets" not in st.session_state:
+        st.session_state["wallets"] = _default_wallets()
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("### Stock positions")
+        stocks = st.data_editor(
+            st.session_state["stock_positions"],
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="stock_positions_editor",
+        )
+    with right:
+        st.markdown("### Crypto wallets")
+        wallets = st.data_editor(
+            st.session_state["wallets"],
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="wallets_editor",
+        )
+
+    st.session_state["stock_positions"] = stocks
+    st.session_state["wallets"] = wallets
+
+    quote_currency = st.selectbox("Wallet quote currency", ["usd", "chf"], index=0)
+    manual_refresh = st.button("Refresh prices and balances")
+    if manual_refresh:
+        _cached_stock_quotes.clear()
+        _cached_wallet_balances.clear()
+
+    symbols = tuple(
+        sorted(
+            {
+                str(symbol).strip().upper()
+                for symbol in stocks.get("Symbol", pd.Series(dtype=str)).tolist()
+                if str(symbol).strip()
+            }
+        )
+    )
+    quotes = _cached_stock_quotes(symbols) if symbols else pd.DataFrame()
+    stock_positions = evaluate_stock_positions(stocks, quotes)
+
+    wallet_payload = wallets.fillna("").to_dict(orient="records")
+    wallets_json = json.dumps(wallet_payload, sort_keys=True)
+    wallet_positions = _cached_wallet_balances(wallets_json, quote_currency)
+
+    totals = portfolio_totals(stock_positions, wallet_positions)
+    mix = holdings_mix(stock_positions, wallet_positions)
+
+    render_portfolio(stock_positions, wallet_positions, totals, mix, quote_currency)
+
+
 def main() -> None:
     _inject_styles()
     _render_header()
@@ -386,6 +486,7 @@ def main() -> None:
         "Navigate",
         [
             "Home",
+            "Portfolio",
             "Cashflow",
             "Spending",
             "Earnings",
@@ -401,6 +502,10 @@ def main() -> None:
             "Report Pack",
         ],
     )
+
+    if page == "Portfolio":
+        _render_portfolio_page()
+        return
 
     enriched, source_context, lookup = _prepare_enriched_data()
     if enriched is None or source_context is None:
