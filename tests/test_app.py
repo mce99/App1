@@ -3,7 +3,7 @@ import zipfile
 
 import pandas as pd
 
-from categorization import assign_categories
+from categorization import assign_categories, enforce_flow_consistency
 from parsing import classify_time_of_day, load_transactions, merge_transactions
 
 
@@ -230,3 +230,96 @@ def test_load_transactions_splits_single_column_semicolon_payload() -> None:
     assert len(out) == 1
     assert out.loc[0, "Merchant"] == "COOP"
     assert float(out.loc[0, "Debit"]) == 10.0
+
+
+def test_load_transactions_handles_signed_credit_and_single_amount_fallback() -> None:
+    csv_content = "\n".join(
+        [
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "h7",
+            "h8",
+            "Abschlussdatum;Abschlusszeit;Währung;Belastung;Gutschrift;Einzelbetrag;Beschreibung1;Fussnoten",
+            "2026-02-01;09:00:00;CHF;0;-15;;CreditHasNegative;",
+            "2026-02-01;10:00:00;CHF;;;25;SingleAmountIncome;",
+            "2026-02-01;11:00:00;CHF;;;-40;SingleAmountSpend;",
+        ]
+    )
+    out = load_transactions(DummyUpload("signed_amounts.csv", csv_content))
+
+    assert len(out) == 3
+    assert float(out.loc[0, "Debit"]) == 15.0
+    assert float(out.loc[0, "Credit"]) == 0.0
+    assert float(out.loc[1, "Credit"]) == 25.0
+    assert float(out.loc[1, "Debit"]) == 0.0
+    assert float(out.loc[2, "Debit"]) == 40.0
+    assert float(out.loc[2, "Credit"]) == 0.0
+
+
+def test_assign_categories_is_flow_aware_for_income_vs_outgoing() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "Beschreibung1": "UBS Switzerland",
+                "Beschreibung2": "Salary",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 45.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "Unknown employer",
+                "Beschreibung2": "Payroll",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 0.0,
+                "Credit": 5000.0,
+            },
+        ]
+    )
+    keyword_map = {"Income & Transfers": ["UBS SWITZERLAND", "PAYROLL"], "Food": ["COOP"]}
+
+    out = assign_categories(df, keyword_map)
+
+    assert out.loc[0, "Category"] != "Income & Transfers"
+    assert out.loc[1, "Category"] == "Income & Transfers"
+
+
+def test_enforce_flow_consistency_corrects_obvious_mismatches() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "Category": "Income & Transfers",
+                "CategoryConfidence": 0.9,
+                "Debit": 35.0,
+                "Credit": 0.0,
+                "IsTransfer": False,
+            },
+            {
+                "Category": "Other",
+                "CategoryConfidence": 0.2,
+                "Debit": 0.0,
+                "Credit": 1200.0,
+                "IsTransfer": False,
+            },
+            {
+                "Category": "Income & Transfers",
+                "CategoryConfidence": 0.9,
+                "Debit": 80.0,
+                "Credit": 0.0,
+                "IsTransfer": True,
+            },
+        ]
+    )
+
+    out = enforce_flow_consistency(df)
+    assert out.loc[0, "Category"] == "Other"
+    assert out.loc[0, "CategoryRule"] == "FlowCorrection:Outgoing"
+    assert out.loc[1, "Category"] == "Income & Transfers"
+    assert out.loc[1, "CategoryRule"] == "FlowCorrection:Incoming"
+    # Transfer rows are intentionally exempt from flow correction.
+    assert out.loc[2, "Category"] == "Income & Transfers"

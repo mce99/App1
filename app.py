@@ -57,7 +57,7 @@ from analytics import (
     weekday_weekend_split,
     weekday_average_cashflow,
 )
-from categorization import DEFAULT_KEYWORD_MAP, assign_categories_with_confidence
+from categorization import DEFAULT_KEYWORD_MAP, assign_categories_with_confidence, enforce_flow_consistency
 from dashboard_views import (
     render_agent_console,
     render_accounts,
@@ -571,6 +571,7 @@ def _prepare_enriched_data() -> tuple[pd.DataFrame | None, pd.DataFrame | None, 
     enriched = enrich_transaction_intelligence(enriched)
     enriched = _apply_merchant_category_rules(enriched)
     enriched = _apply_pattern_category_rules(enriched)
+    enriched = enforce_flow_consistency(enriched)
 
     # Force transfer category where confidence is high.
     enriched.loc[(enriched["IsTransfer"]) & (enriched["TransferConfidence"] >= 0.7), "Category"] = "Transfers"

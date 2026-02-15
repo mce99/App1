@@ -418,14 +418,14 @@ def _drop_statement_noise(df: pd.DataFrame) -> pd.DataFrame:
     drop_cols = [
         col
         for col in out.columns
-        if str(col).startswith("Unnamed") or col in ("Einzelbetrag",)
+        if str(col).startswith("Unnamed")
     ]
     return out.drop(columns=[col for col in drop_cols if col in out.columns])
 
 
 def _normalize_amount_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    for col in ["Belastung", "Gutschrift", "Saldo"]:
+    for col in ["Belastung", "Gutschrift", "Einzelbetrag", "Saldo"]:
         if col in out.columns:
             out[col] = (
                 out[col]
@@ -438,6 +438,36 @@ def _normalize_amount_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _derive_debit_credit(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Build robust positive-only Debit/Credit series from statement amount fields."""
+    def _series(col: str) -> pd.Series:
+        if col in df.columns:
+            return pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        return pd.Series(0.0, index=df.index, dtype=float)
+
+    index = df.index
+    belastung = _series("Belastung")
+    gutschrift = _series("Gutschrift")
+    einzelbetrag = _series("Einzelbetrag")
+
+    debit = belastung.abs()
+    credit = gutschrift.clip(lower=0.0)
+
+    # Defensive: if credit column contains negative values, treat them as debit outflow.
+    debit = debit + (-gutschrift.clip(upper=0.0))
+
+    # Fallback for single-net-amount exports where debit/credit columns are empty.
+    missing_amount = (debit == 0) & (credit == 0) & (einzelbetrag != 0)
+    debit.loc[missing_amount] = (-einzelbetrag.loc[missing_amount].clip(upper=0.0))
+    credit.loc[missing_amount] = einzelbetrag.loc[missing_amount].clip(lower=0.0)
+
+    debit = debit.fillna(0.0).astype(float)
+    credit = credit.fillna(0.0).astype(float)
+    debit.index = index
+    credit.index = index
+    return debit, credit
+
+
 def load_transactions(uploaded_file: Any) -> pd.DataFrame:
     """Load and preprocess transactions from semicolon CSV or Excel exports."""
     raw_df, context = _load_raw_statement(uploaded_file)
@@ -447,10 +477,9 @@ def load_transactions(uploaded_file: Any) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
 
-    df["Debit"] = (
-        df.get("Belastung", pd.Series(dtype=float)).fillna(0).apply(lambda x: -x if x < 0 else x)
-    )
-    df["Credit"] = df.get("Gutschrift", pd.Series(dtype=float)).fillna(0)
+    debit, credit = _derive_debit_credit(df)
+    df["Debit"] = debit
+    df["Credit"] = credit
     df["Merchant"] = df.get("Beschreibung1", "").astype(str).str.strip()
     df["Location"] = df.get("Beschreibung3", "").fillna(df.get("Beschreibung2", "")).astype(str)
     df["Date"] = _parse_datetime_series(df.get("Abschlussdatum"))

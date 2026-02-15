@@ -17,6 +17,7 @@ Now includes a modular finance workspace with:
 - Corporate-style executive UI theme for clean, boardroom-ready dashboards
 - Period-over-period KPI benchmarking, weekday-hour heatmaps, and automated savings opportunity scanner
 - Executive PDF brief export (KPI summary + period comparison + top savings levers)
+- Improved flow-aware transaction labeling (stronger spend vs income detection + transfer-safe corrections)
 
 ## Run locally
 
