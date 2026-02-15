@@ -17,6 +17,8 @@ DEFAULT_KEYWORD_MAP = {
         "PIZZA",
         "UBER   * EATS",
         "UBER   *ONE",
+        "UBER EATS",
+        "UBERJP EATS",
         "STARBUCKS",
         "CAFE",
         "MCDON",
@@ -28,6 +30,82 @@ DEFAULT_KEYWORD_MAP = {
         "METZGEREI OBERWACHT",
         "AVEC",
         "FLEISCHLI",
+        "LAWSON",
+        "FAMILYMART",
+        "SEVEN-ELEVEN",
+        "DELIVEROO",
+        "DENNER",
+        "MARCHE",
+        "MARCHÉ",
+        "BAHNHOFKIOSK",
+        "K KIOSK",
+        "KIOSK",
+        "BREZELKONIG",
+        "BREZELKÖNIG",
+        "ROYAL-PANDA",
+        "CUCINA",
+        "CHEGRILL",
+        "ELEPHANTS HEAD",
+        "LIPP",
+        "JULESVERNE",
+        "UBS REST.",
+        "BACKEREI",
+        "BÄCKEREI",
+        "BUTIA A L'EN",
+        "RONI'S BELSIZE",
+        "THE HAVERSTOCK TAVERN",
+        "HAVERSTOCK TAVERN",
+        "KAIPIRAS",
+        "THE MIXER",
+        "PLIMSOLL",
+        "WOLFPACK",
+        "SP CLUBHOUSE",
+        "TURBINENBRAEU",
+        "BRISKET ZUERICH",
+        "YARDBIRD ZUERICH",
+        "TAOS BAR",
+        "NICOS KITCHEN",
+        "DER ZUCKERBAECKER",
+        "DER ZUCKERBÄCKER",
+        "YOOJI",
+        "YOOJI'S",
+        "OH MY GREEK",
+        "MIT & OHNE KEBAB",
+        "BURGER KING",
+        "JULIETTE-PAIN DAMOUR",
+        "FIVE GUYS",
+        "RAKUTENPAY PASCALLEGAC",
+        "AKASAKAYAKINIKUSHIYA",
+        "GINZANOSTEAK",
+        "KENZAN ANAINTAKONCHINENT",
+        "KYOTOKATSUGYU",
+        "YAZAWACHICKEN",
+        "NIKURYORI",
+        "FORTUNE GARDEN KYOTO",
+        "DEIRIYAMAZAKI",
+        "BELSIZE ORGANIC",
+        "HOMURA",
+        "MUNCHMASTER",
+        "QUICK MARKET",
+        "TOUJOURS PLUSS",
+        "CAFFE SPETTACOLO",
+        "CH GASTRO AG",
+        "LS BLACKTAP",
+        "SANDO ZURICH",
+        "ZAPP - QUICK COMMERCE",
+        "GUETS GUGGELI SAHIN",
+        "HOLLY BUSH HAMPSTEAD",
+        "ENGLAND'S LANE",
+        "OSTERIA SCHUTZENSTULE",
+        "STROZZIS",
+        "SANDORATSUGU",
+        "BIG TASTY",
+        "HM-HELALMETZGER",
+        "DORFBECK NYFELER",
+        "TULLYS COFFEE",
+        "NZZ BAR ZH",
+        "GNUSSPUR",
+        "LA ROTONDA PORT OLIMPIC",
         "GOURMET",
         "P&B",
     ],
@@ -46,6 +124,31 @@ DEFAULT_KEYWORD_MAP = {
         "ZURICHSEE-FAHRE",
         "FAEHRE",
         "AUTOQUAI",
+        "PARKHAUS",
+        "NARITA AIRPORT",
+        "AIRPORT",
+        "VBZ",
+        "LIME*RIDE",
+        "BOLT.EU",
+        "GREENCAB",
+        "SHELL",
+        "LUFTHANSA",
+        "SWISS AIR",
+        "MUOTTAS MURAGL BAHN",
+        "SIGNALBAHN",
+        "PARKPLATZ SIGNALBAHN",
+        "STATION SAVOGNIN",
+        "STATION ST. KATHARINA",
+        "TELEVEBIER",
+        "BP ST. MORITZ",
+        "BAHNHOF UNTERFUHRUNG",
+        "BAHNHOF UNTERFÜHRUNG",
+        "HAUSERMANN STADION GARAG",
+        "BALANCES - 6004 LUZERN",
+        "ST.  ENGADIN ST MORITZ",
+        "AUTOPSTUETZLI",
+        "STUTZLIWOSCH",
+        "CAR WASH",
         "CAR",
         "ENI",
     ],
@@ -63,6 +166,20 @@ DEFAULT_KEYWORD_MAP = {
         "STEUERBEZUG",
         "SVA ZURICH",
         "DIENSTLEISTUNGSPREISABSCHLUSS",
+        "UNIVERSITATSSPITAL",
+        "UNIVERSITÄTSSPITAL",
+        "AMAVITA",
+        "TOPPHARM",
+        "FREMDKOSTEN",
+        "ZINSABSCHLUSS",
+        "WALK-IN-LABOR",
+        "UKVI ETAMOB",
+        "WWW.BWLEGAL.CO.UK",
+        "TERLINDEN MANAGEMENT",
+        "SCC0444 SUNRISE",
+        "GLOBALCHIRYOIN AKASAKA",
+        "MOVINGINTERNET.CO.UK",
+        "TEXTILPFLEGE ZUERISEE",
         "STEUER",
     ],
     "Shopping & Retail": [
@@ -82,6 +199,60 @@ DEFAULT_KEYWORD_MAP = {
         "TAOBAO",
         "MAGIC X",
         "STEINLIN SCHMUCK",
+        "JELMOLI",
+        "JUMBO",
+        "INTERDISCOUNT",
+        "LOFT",
+        "DAIMARU",
+        "DIGITEC GALAXUS",
+        "HAUSTIER PARADIES",
+        "HOUSE OF CB",
+        "SKIMS",
+        "SP MISTREASS",
+        "MISTREASS",
+        "MAISONMAIA",
+        "LANDOLT-ARBENZ",
+        "DOUGLAS",
+        "KLARNA*COS",
+        "COCOKARAFINE",
+        "YURAKUCHO MARUI",
+        "GINZA SIX",
+        "TOKYO ICHIBANGAI",
+        "TOKYO GIFT PARETTO",
+        "MUJIRUSHIRYOHIN",
+        "KIKUICHIMONNJI",
+        "KODAIJI TESSAIDO",
+        "RIKAWAFUKUGIONTEN",
+        "PARIJAN",
+        "MYPROTEIN",
+        "LENS4YOU",
+        "OCHSNER AG",
+        "KREISLADEN",
+        "TOPDEN",
+        "BLATTNER",
+        "LOLLIPOP ZURICH",
+        "DOGWOOD PLAZA",
+        "LAFORET HARAJUKU",
+        "SP PPFLINGERIE",
+        "SP COZYLLIO",
+        "SP CANPELA",
+        "TENGOSOK KIKOTOJE",
+        "FRONERI SWITZERLAND",
+        "BURGI.CH AG",
+        "PHILORO SCHWEIZ",
+        "MS AKIHABARA",
+        "FRESHTECH",
+        "SP RYM PRODUCTS",
+        "LOLIPOP ZURICH",
+        "SUMUP  *EINZELFIRMA",
+    ],
+    "Investments & Digital Assets": [
+        "CRYPTO.COM",
+        "BIFINITY",
+        "MOONPAY",
+        "2C2P",
+        "PAYPAL *LORDMILES LORD",
+        "PAYPAL *CHINAFL6LDN",
     ],
     "Income & Transfers": [
         "METALLUM",
@@ -92,6 +263,7 @@ DEFAULT_KEYWORD_MAP = {
         "ENKELMANN",
         "TRANSFER",
         "UBS SWITZERLAND",
+        "WISE EUROPE",
     ],
     "Entertainment & Leisure": [
         "FANVUE",
@@ -102,7 +274,33 @@ DEFAULT_KEYWORD_MAP = {
         "GYM",
         "SPA",
         "ART",
+        "AVEDA",
+        "STRANDBADSAUNA",
+        "SKISERVICE",
+        "SAGRADA FAMILIA",
+        "WHOOP",
+        "JINDAI BOTANICAL GARDENS",
+        "TICKETMELON",
+        "SUMUP  *HR HAIR REMOVAL",
+        "HAIRSTYLIST PIERRE",
         "MUSEUM",
+    ],
+    "Travel & Lodging": [
+        "HOTEL ARTS",
+        "PENINSULA TOKYO",
+        "ANA INTERCONTINENTAL",
+        "INTERCONTINENTAL TOKYO",
+        "HOTEL LAUDINELLA",
+        "BERGHOTEL",
+        "WASHINGTON HOTEL",
+        "CHALET",
+        "HOTEL",
+        "MARRIOTT",
+        "AIRBNB",
+        "BOOKING.COM",
+        "ALEX LAKE ZURICH",
+        "LE FARINET VERBIER",
+        "CHESA VEGLIA",
     ],
 }
 
@@ -116,7 +314,7 @@ TRANSFER_KEYWORDS = [
     "ACCOUNT TRANSFER",
     "IBAN",
     "REVOLUT",
-    "TWINT",
+    "WISE",
     "BARBEZUG",
     "CASH WITHDRAWAL",
 ]
@@ -138,6 +336,11 @@ INCOME_KEYWORDS = [
     "REFUND",
 ]
 
+STRICT_WORD_KEYWORDS = {
+    "CAR",
+    "ART",
+}
+
 
 def _score_keyword_match(description: str, merchant: str, keyword: str) -> float:
     score = 0.75
@@ -146,6 +349,19 @@ def _score_keyword_match(description: str, merchant: str, keyword: str) -> float
     if re.search(rf"\b{re.escape(keyword)}\b", description):
         score += 0.06
     return min(score, 0.98)
+
+
+def _keyword_matches(description: str, keyword: str) -> bool:
+    kw = str(keyword or "").upper().strip()
+    if not kw:
+        return False
+    if kw in STRICT_WORD_KEYWORDS:
+        return bool(re.search(rf"(?<![A-Z0-9]){re.escape(kw)}(?![A-Z0-9])", description))
+
+    alnum = "".join(ch for ch in kw if ch.isalnum())
+    if len(alnum) <= 4 and " " not in kw and "&" not in kw and "*" not in kw and "/" not in kw:
+        return bool(re.search(rf"(?<![A-Z0-9]){re.escape(kw)}(?![A-Z0-9])", description))
+    return kw in description
 
 
 def _to_float(value) -> float:
@@ -180,9 +396,18 @@ def assign_categories_with_confidence(df: pd.DataFrame, keyword_map: dict) -> pd
         outgoing = debit > 0 and credit == 0
         incoming = credit > 0 and debit == 0
 
+        if outgoing and (
+            "BARGELDBEZUG" in description or "BANCOMAT" in description or "ATM" in description
+        ):
+            return "Transfers", 0.96, "Transfer:CashWithdrawal"
+        if "ZINSABSCHLUSS" in description:
+            return "Utilities & Bills", 0.9, "Bank:InterestSettlement"
+        if "FREMDKOSTEN" in description:
+            return "Utilities & Bills", 0.9, "Bank:ForeignFees"
+
         for keyword in TRANSFER_KEYWORDS:
             kw = str(keyword).upper()
-            if kw and kw in description:
+            if kw and _keyword_matches(description, kw):
                 return "Transfers", 0.93, f"Transfer:{kw}"
 
         if incoming:
@@ -198,7 +423,7 @@ def assign_categories_with_confidence(df: pd.DataFrame, keyword_map: dict) -> pd
                 continue
             for keyword in keywords:
                 kw = str(keyword).upper()
-                if kw in description:
+                if _keyword_matches(description, kw):
                     return category, _score_keyword_match(description, merchant, kw), kw
 
         if incoming:
@@ -222,8 +447,14 @@ def enforce_flow_consistency(df: pd.DataFrame) -> pd.DataFrame:
     """Correct obvious direction/category mismatches using debit/credit flow."""
     out = df.copy()
     debit = pd.to_numeric(out.get("Debit", out.get("DebitCHF", 0.0)), errors="coerce").fillna(0.0)
-    credit = pd.to_numeric(out.get("Credit", out.get("CreditCHF", 0.0)), errors="coerce").fillna(0.0)
-    category = out.get("Category", pd.Series(["Other"] * len(out), index=out.index)).fillna("Other").astype(str)
+    credit = pd.to_numeric(out.get("Credit", out.get("CreditCHF", 0.0)), errors="coerce").fillna(
+        0.0
+    )
+    category = (
+        out.get("Category", pd.Series(["Other"] * len(out), index=out.index))
+        .fillna("Other")
+        .astype(str)
+    )
     transfer_mask = (
         out.get("IsTransfer", pd.Series([False] * len(out), index=out.index))
         .fillna(False)
@@ -237,18 +468,18 @@ def enforce_flow_consistency(df: pd.DataFrame) -> pd.DataFrame:
     if wrong_income.any():
         out.loc[wrong_income, "Category"] = "Other"
         if "CategoryConfidence" in out.columns:
-            out.loc[wrong_income, "CategoryConfidence"] = out.loc[wrong_income, "CategoryConfidence"].apply(
-                lambda v: min(_to_float(v), 0.35)
-            )
+            out.loc[wrong_income, "CategoryConfidence"] = out.loc[
+                wrong_income, "CategoryConfidence"
+            ].apply(lambda v: min(_to_float(v), 0.35))
         out.loc[wrong_income, "CategoryRule"] = "FlowCorrection:Outgoing"
 
     missing_income = incoming & category.eq("Other") & (~transfer_mask)
     if missing_income.any():
         out.loc[missing_income, "Category"] = "Income & Transfers"
         if "CategoryConfidence" in out.columns:
-            out.loc[missing_income, "CategoryConfidence"] = out.loc[missing_income, "CategoryConfidence"].apply(
-                lambda v: max(_to_float(v), 0.58)
-            )
+            out.loc[missing_income, "CategoryConfidence"] = out.loc[
+                missing_income, "CategoryConfidence"
+            ].apply(lambda v: max(_to_float(v), 0.58))
         out.loc[missing_income, "CategoryRule"] = "FlowCorrection:Incoming"
 
     return out

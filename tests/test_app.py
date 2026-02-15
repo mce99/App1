@@ -22,8 +22,18 @@ class DummyUploadBytes(io.BytesIO):
 def test_assign_categories_uses_keyword_map() -> None:
     df = pd.DataFrame(
         [
-            {"Beschreibung1": "Coop Zurich", "Beschreibung2": "", "Beschreibung3": "", "Fussnoten": ""},
-            {"Beschreibung1": "Unknown Vendor", "Beschreibung2": "", "Beschreibung3": "", "Fussnoten": ""},
+            {
+                "Beschreibung1": "Coop Zurich",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+            },
+            {
+                "Beschreibung1": "Unknown Vendor",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+            },
         ]
     )
     keyword_map = {"Food": ["COOP"]}
@@ -377,3 +387,49 @@ def test_assign_categories_uses_web_researched_merchant_hints() -> None:
     assert out.loc[2, "Category"] == "Food & Drink"
     assert out.loc[3, "Category"] == "Income & Transfers"
     assert out.loc[4, "Category"] == "Transfers"
+
+
+def test_assign_categories_handles_travel_and_avoids_short_keyword_false_positives() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "Beschreibung1": "RC Hotel Arts Barcelona",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 800.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "The Peninsula Tokyo",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 500.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "Payment card settlement",
+                "Beschreibung2": "",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 25.0,
+                "Credit": 0.0,
+            },
+            {
+                "Beschreibung1": "Bargeldbezug am Bancomat im Ausland",
+                "Beschreibung2": "Chuo-ku Tokyo",
+                "Beschreibung3": "",
+                "Fussnoten": "",
+                "Debit": 100.0,
+                "Credit": 0.0,
+            },
+        ]
+    )
+
+    out = assign_categories(df, DEFAULT_KEYWORD_MAP)
+    assert out.loc[0, "Category"] == "Travel & Lodging"
+    assert out.loc[1, "Category"] == "Travel & Lodging"
+    # "card" should not trigger Transport via broad CAR substring anymore.
+    assert out.loc[2, "Category"] != "Transport"
+    assert out.loc[3, "Category"] == "Transfers"

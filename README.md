@@ -19,6 +19,7 @@ Now includes a modular finance workspace with:
 - Executive PDF brief export (KPI summary + period comparison + top savings levers)
 - Improved flow-aware transaction labeling (stronger spend vs income detection + transfer-safe corrections)
 - Added web-researched merchant keyword coverage for UBS-style names (AGROLA/SOCAR/SBB/AVEC/Digitec/Honold/etc.)
+- Added travel-cluster merchant coverage (Barcelona/Japan hotels, Lawson/FamilyMart, ATM-withdrawal detection)
 
 ## Run locally
 
