@@ -441,3 +441,55 @@ def test_chart_builder_dataset_split_and_transfer_filtering() -> None:
     assert set(chart_with_transfers.columns.tolist()) == {"A", "B"}
     assert chart_without_transfers.columns.tolist() == ["A"]
     assert float(chart_with_transfers.sum().sum()) > float(chart_without_transfers.sum().sum())
+
+
+def test_chart_builder_dataset_supports_daily_weekly_monthly_intervals() -> None:
+    df = pd.DataFrame(
+        [
+            {"Date": "2026-02-02", "Time": "10:00:00", "DebitCHF": 10.0, "CreditCHF": 0.0},
+            {"Date": "2026-02-03", "Time": "10:00:00", "DebitCHF": 20.0, "CreditCHF": 0.0},
+            {"Date": "2026-02-10", "Time": "10:00:00", "DebitCHF": 30.0, "CreditCHF": 0.0},
+        ]
+    )
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    daily = chart_builder_dataset(
+        df,
+        x_axis="Date",
+        metric="Spending",
+        aggregation="Sum",
+        split_by="None",
+        top_n=20,
+        cumulative=False,
+        date_interval="Daily",
+        include_transfers=True,
+    )
+    weekly = chart_builder_dataset(
+        df,
+        x_axis="Date",
+        metric="Spending",
+        aggregation="Sum",
+        split_by="None",
+        top_n=20,
+        cumulative=False,
+        date_interval="Weekly",
+        include_transfers=True,
+    )
+    monthly = chart_builder_dataset(
+        df,
+        x_axis="Date",
+        metric="Spending",
+        aggregation="Sum",
+        split_by="None",
+        top_n=20,
+        cumulative=False,
+        date_interval="Monthly",
+        include_transfers=True,
+    )
+
+    assert len(daily) == 3
+    assert len(weekly) == 2
+    assert len(monthly) == 1
+    assert float(daily["Spending"].sum()) == 60.0
+    assert float(weekly["Spending"].sum()) == 60.0
+    assert float(monthly["Spending"].sum()) == 60.0

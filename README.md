@@ -13,7 +13,7 @@ Now includes a modular finance workspace with:
 - AI Coach (optional OpenAI API key, offline fallback if no key)
 - Savings simulator and month-over-month trend diagnostics in Plan & Improve
 - Deep Analytics tab (cashflow stability, run-rate projections, concentration, size bands, volatility)
-- Chart Builder workspace for custom charts by date/month/category/merchant/account
+- Chart Builder workspace for custom charts by date/month/category/merchant/account with daily/weekly/monthly intervals
 
 ## Run locally
 

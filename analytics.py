@@ -248,6 +248,7 @@ def chart_builder_dataset(
     split_by: str = "None",
     top_n: int = 20,
     cumulative: bool = False,
+    date_interval: str = "Daily",
     include_transfers: bool = True,
 ) -> pd.DataFrame:
     """Create aggregated chart dataset for the interactive chart builder."""
@@ -260,6 +261,17 @@ def chart_builder_dataset(
         return pd.DataFrame()
 
     work["_x"] = _chart_axis_series(work, x_axis)
+    if x_axis in {"Date", "Month"}:
+        interval = str(date_interval or "Daily").strip().title()
+        if interval not in {"Daily", "Weekly", "Monthly"}:
+            interval = "Daily"
+        dt_axis = pd.to_datetime(work["_x"], errors="coerce")
+        if interval == "Weekly":
+            work["_x"] = dt_axis.dt.to_period("W-SUN").dt.start_time
+        elif interval == "Monthly":
+            work["_x"] = dt_axis.dt.to_period("M").astype(str)
+        else:
+            work["_x"] = dt_axis.dt.normalize()
     work = work[work["_x"].notna()].copy()
     if work.empty:
         return pd.DataFrame()

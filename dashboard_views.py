@@ -221,7 +221,17 @@ def render_chart_builder(filtered: pd.DataFrame) -> None:
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        x_axis = st.selectbox("X axis", x_options, index=1 if "Month" in x_options else 0)
+        x_axis = st.selectbox("X axis", x_options, index=0)
+        if x_axis in {"Date", "Month"}:
+            interval_default = 0 if x_axis == "Date" else 2
+            date_interval = st.selectbox(
+                "Time interval",
+                ["Daily", "Weekly", "Monthly"],
+                index=interval_default,
+                help="Use Daily for the most detailed spending view.",
+            )
+        else:
+            date_interval = "Daily"
         chart_type = st.selectbox("Chart type", ["Line", "Bar", "Area"], index=0)
     with c2:
         metric = st.selectbox("Metric", ["Spending", "Earnings", "Net", "Transactions"], index=0)
@@ -254,6 +264,7 @@ def render_chart_builder(filtered: pd.DataFrame) -> None:
         split_by=split_by,
         top_n=int(top_n),
         cumulative=bool(cumulative),
+        date_interval=date_interval,
         include_transfers=bool(include_transfers),
     )
     if chart_data.empty:
